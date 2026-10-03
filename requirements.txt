@@ -6,3 +6,6 @@ websockets>=13.0
 playwright>=1.40.0
 pytest>=8.0.0
 pytest-asyncio>=0.24.0
+# pc_control.py (Windows only): system volume and output device, PC status.
+pycaw>=20240210; sys_platform == "win32"
+psutil>=5.9; sys_platform == "win32"

@@ -32,11 +32,16 @@ def as_host(monkeypatch):
 
 def test_macos_declares_every_capability_so_nothing_is_withdrawn():
     """The acceptance criterion for the whole refactor: on a Mac, this
-    layer is invisible."""
+    layer is invisible — for everything the Mac was ever able to do. The one
+    capability it does not declare is CAP_PC_CONTROL, which arrived later and
+    is written against Win32 (pc_control.py); its tools are withdrawn there
+    rather than faked."""
     from jarvis_platform.macos import MACOS
-    assert MACOS.capabilities == jp.ALL_CAPABILITIES
-    assert MACOS.withdrawn_tools() == frozenset()
-    assert MACOS.filter_tools(sorted(TOOL_CAPABILITIES)) == sorted(TOOL_CAPABILITIES)
+    pc_tools = {t for t, cap in TOOL_CAPABILITIES.items() if cap == jp.CAP_PC_CONTROL}
+    assert MACOS.capabilities == jp.ALL_CAPABILITIES - {jp.CAP_PC_CONTROL}
+    assert MACOS.withdrawn_tools() == frozenset(pc_tools)
+    rest = sorted(set(TOOL_CAPABILITIES) - pc_tools)
+    assert MACOS.filter_tools(sorted(TOOL_CAPABILITIES)) == rest
 
 
 def test_an_unknown_platform_declares_nothing_rather_than_guessing():

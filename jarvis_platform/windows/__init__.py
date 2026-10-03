@@ -58,7 +58,7 @@ repository readers, the Playwright page tools, `github_repo`,
 
 from __future__ import annotations
 
-from ..base import (CAP_BROWSER, CAP_EDITOR, CAP_NOTIFICATIONS,
+from ..base import (CAP_BROWSER, CAP_EDITOR, CAP_NOTIFICATIONS, CAP_PC_CONTROL,
                     CAP_SCREEN_CAPTURE, CAP_SESSION_STEER, CAP_TERMINAL,
                     CAP_WINDOW_LIST, Host)
 from . import launcher, notifications, screen, secrets
@@ -73,6 +73,7 @@ WINDOWS = Host(
         CAP_SESSION_STEER,
         CAP_WINDOW_LIST,
         CAP_SCREEN_CAPTURE,
+        CAP_PC_CONTROL,          # pc_control.py: Win32, pycaw, the Start menu
     }),
     notifications=notifications,
     launcher=launcher,

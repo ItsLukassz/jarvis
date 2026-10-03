@@ -44,8 +44,11 @@ CAP_DIALOG_KEY = "dialog_key"
 CAP_SESSION_STEER = "session_steer"
 #: Post a native notification when no browser tab is listening.
 CAP_NOTIFICATIONS = "notifications"
+#: Open/close apps, media keys, windows, volume, clipboard, status (pc_control.py).
+CAP_PC_CONTROL = "pc_control"
 
 ALL_CAPABILITIES = frozenset({
+    CAP_PC_CONTROL,
     CAP_SCREEN_CAPTURE,
     CAP_WINDOW_LIST,
     CAP_TERMINAL,
@@ -72,6 +75,15 @@ ALL_CAPABILITIES = frozenset({
 TOOL_CAPABILITIES: dict[str, str] = {
     "look_at_screen": CAP_SCREEN_CAPTURE,
     "look_at_window": CAP_SCREEN_CAPTURE,
+    "open_app": CAP_PC_CONTROL,
+    "close_app": CAP_PC_CONTROL,
+    "media_control": CAP_PC_CONTROL,
+    "window_control": CAP_PC_CONTROL,
+    "set_volume": CAP_PC_CONTROL,
+    "set_audio_output": CAP_PC_CONTROL,
+    "read_clipboard": CAP_PC_CONTROL,
+    "write_clipboard": CAP_PC_CONTROL,
+    "pc_status": CAP_PC_CONTROL,
     "what_is_on_screen": CAP_WINDOW_LIST,
     "open_in_terminal": CAP_TERMINAL,
     "run_command": CAP_TERMINAL,

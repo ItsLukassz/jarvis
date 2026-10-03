@@ -45,14 +45,14 @@ if _env_path.exists():
         os.environ.setdefault(_k, _v)
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from collections.abc import Mapping
 from typing import Optional
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
 import builds
@@ -2688,6 +2688,8 @@ TAINTING_TOOLS = {
     "look_at_screen": "what is on your screen",
     "look_at_window": "what is on your screen",
     "what_is_on_screen": "what is on your screen",
+    # Whatever was last copied: a web page, a message, a stranger's text.
+    "read_clipboard": "what is on your clipboard",
 }
 
 # The other half of the partition, each with the reason it is exempt. Held
@@ -2696,7 +2698,29 @@ TAINTING_TOOLS = {
 # so a tool added next year has to make this decision on purpose instead of
 # inheriting "clean" by being forgotten — which is exactly how nine readers
 # came to be missing from the original set.
+_PC_NAMES_ONLY = (
+    "it acts on this PC and hands back at most a NAME off the machine itself "
+    "— a Start-menu shortcut, a process, a sound device — inside "
+    "`_wrap_untrusted`; no file content, no page and no message text")
+
 TAINT_EXEMPT_TOOLS = {
+    "open_app": _PC_NAMES_ONLY,
+    "close_app": _PC_NAMES_ONLY,
+    "window_control": _PC_NAMES_ONLY,
+    "set_audio_output": _PC_NAMES_ONLY,
+    "pc_status": _PC_NAMES_ONLY,
+    "media_control": (
+        "it presses one media key and answers with a fixed word; nothing "
+        "from the machine or anywhere else comes back at all"),
+    "set_volume": (
+        "it sets or reads the system volume and answers with a number; "
+        "there is no text in it that JARVIS did not write"),
+    "write_clipboard": (
+        "it WRITES the brain's own text to the clipboard and answers with a "
+        "fixed sentence; reading the clipboard is `read_clipboard`, which taints"),
+    "set_reminder": (
+        "it schedules the user's own words to be said back later and "
+        "answers with a clock time computed here; nothing foreign is read"),
     "list_projects": (
         "it emits project names and directory paths off the session roster "
         "and no file content, no transcript text and no page — and it is how "
@@ -6285,6 +6309,169 @@ ACTING_TOOLS.update({"look_at_screen", "look_at_window", "what_is_on_screen"})
 
 
 # ---------------------------------------------------------------------------
+# PC control (pc_control.py) and reminders
+# ---------------------------------------------------------------------------
+#
+# Hands, where the screen tools are eyes. Every action is one a keyboard or a
+# click could do and undo — open what the Start menu lists, ask a window to
+# close, a media key, the volume — so none is staged behind a read-back the
+# way run_command is. All are ACTING tools: they fire on the user's own turn
+# and never off a watcher's, or after something untrusted was read.
+#
+# Names that come back from the machine (an app, a device, the clipboard) are
+# not JARVIS's words and go inside `_wrap_untrusted`.
+
+_PC_WRAP_NAME = "this pc"
+
+
+async def _pc(fn, *args) -> tuple[object, str | None]:
+    """Run one blocking pc_control call. (result, None) or (None, refusal)."""
+    import pc_control
+    import window_capture
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(fn, *args), SCREEN_DEADLINE_SEC), None
+    except asyncio.TimeoutError:
+        return None, "That took too long, sir — I've given up on it."
+    except (pc_control.PcError, window_capture.WindowCaptureError) as e:
+        return None, f"{e}, sir."
+    except Exception as e:
+        log.warning("pc control failed: %s", e)
+        return None, "I couldn't do that just now, sir."
+
+
+async def tool_open_app(args: dict) -> str:
+    import pc_control
+    name, refusal = await _pc(pc_control.open_app, str(args.get("name", "")))
+    return refusal or f"Opened {_wrap_untrusted(_PC_WRAP_NAME, str(name))}"
+
+
+async def tool_close_app(args: dict) -> str:
+    import pc_control
+    name, refusal = await _pc(pc_control.close_app, str(args.get("name", "")))
+    return refusal or f"Asked it to close: {_wrap_untrusted(_PC_WRAP_NAME, str(name))}"
+
+
+async def tool_media_control(args: dict) -> str:
+    import pc_control
+    _, refusal = await _pc(pc_control.media, str(args.get("action", "")))
+    return refusal or "Done."
+
+
+async def tool_window_control(args: dict) -> str:
+    import pc_control
+    name, refusal = await _pc(pc_control.window, str(args.get("name", "")),
+                              str(args.get("action", "")))
+    return refusal or f"Done: {_wrap_untrusted(_PC_WRAP_NAME, str(name))}"
+
+
+async def tool_set_volume(args: dict) -> str:
+    import pc_control
+    raw = args.get("percent")
+    try:
+        percent = None if raw in (None, "") else int(raw)
+    except (TypeError, ValueError):
+        return "I need a number from 0 to 100 for the volume, sir."
+    level, refusal = await _pc(pc_control.volume, percent)
+    return refusal or f"The system volume is at {level} percent."
+
+
+async def tool_set_audio_output(args: dict) -> str:
+    import pc_control
+    device = str(args.get("device") or "").strip()
+    if not device:
+        names, refusal = await _pc(pc_control.audio_outputs)
+        return refusal or "Outputs: " + _wrap_untrusted(_PC_WRAP_NAME, "; ".join(names))
+    name, refusal = await _pc(pc_control.set_audio_output, device)
+    return refusal or f"Sound now comes out of {_wrap_untrusted(_PC_WRAP_NAME, str(name))}"
+
+
+CLIPBOARD_MAX_CHARS = 1200
+
+
+async def tool_read_clipboard(args: dict) -> str:
+    import pc_control
+    text, refusal = await _pc(pc_control.clipboard_read)
+    if refusal:
+        return refusal
+    if not text:
+        return "The clipboard is empty, or holds something that isn't text."
+    return "The clipboard holds: " + _wrap_untrusted(_PC_WRAP_NAME, str(text)[:CLIPBOARD_MAX_CHARS])
+
+
+async def tool_write_clipboard(args: dict) -> str:
+    import pc_control
+    text = str(args.get("text") or "")
+    if not text:
+        return "There was nothing to copy."
+    _, refusal = await _pc(pc_control.clipboard_write, text)
+    return refusal or "It's on the clipboard."
+
+
+async def tool_pc_status(args: dict) -> str:
+    import pc_control
+    text, refusal = await _pc(pc_control.status)
+    return refusal or _wrap_untrusted(_PC_WRAP_NAME, str(text))
+
+
+REMINDER_MAX_MINUTES = 24 * 60
+REMINDER_MAX_CHARS = 200
+# ponytail: reminders live in memory and die with the server; persist them
+# in run_store if they need to survive a restart.
+_reminders: set = set()
+
+
+async def _fire_reminder(delay_sec: float, message: str) -> None:
+    await asyncio.sleep(delay_sec)
+    if speech is not None:
+        # The user's own words, said back to him — `_safe_label`'s case.
+        said = _safe_label(message, REMINDER_MAX_CHARS)
+        await speech.say(f"A reminder, sir: {said}", Priority.NORMAL)
+
+
+async def tool_set_reminder(args: dict) -> str:
+    message = " ".join(str(args.get("message") or "").split())[:REMINDER_MAX_CHARS]
+    if not message:
+        return "What should I remind you of, sir?"
+    at = str(args.get("at") or "").strip()
+    try:
+        if at:
+            hour, minute = (int(x) for x in at.split(":"))
+            now = datetime.now()
+            when = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            if when <= now:
+                when += timedelta(days=1)
+            minutes = (when - now).total_seconds() / 60
+        else:
+            minutes = float(args.get("minutes"))
+    except (TypeError, ValueError):
+        return "I need either a number of minutes or a time like 18:30, sir."
+    if not 0 < minutes <= REMINDER_MAX_MINUTES:
+        return "I can set a reminder for up to a day ahead, sir."
+    task = _spawn(_fire_reminder(minutes * 60, message))
+    _reminders.add(task)
+    task.add_done_callback(_reminders.discard)
+    due = (datetime.now() + timedelta(minutes=minutes)).strftime("%H:%M")
+    return f"Reminder set for {due}."
+
+
+TOOL_HANDLERS.update({
+    "open_app": tool_open_app,
+    "close_app": tool_close_app,
+    "media_control": tool_media_control,
+    "window_control": tool_window_control,
+    "set_volume": tool_set_volume,
+    "set_audio_output": tool_set_audio_output,
+    "read_clipboard": tool_read_clipboard,
+    "write_clipboard": tool_write_clipboard,
+    "pc_status": tool_pc_status,
+    "set_reminder": tool_set_reminder,
+})
+ACTING_TOOLS.update({"open_app", "close_app", "media_control", "window_control",
+                     "set_volume", "set_audio_output", "read_clipboard",
+                     "write_clipboard", "pc_status", "set_reminder"})
+
+
+# ---------------------------------------------------------------------------
 # GitHub, in half a second
 # ---------------------------------------------------------------------------
 #
@@ -7382,6 +7569,25 @@ async def api_get_preferences():
         "user_name": env_dict.get("USER_NAME", ""),
         "honorific": env_dict.get("HONORIFIC", "sir"),
     }
+
+class VoicePreview(BaseModel):
+    voice: str = ""
+
+
+@app.post("/api/settings/voice/preview")
+async def api_voice_preview(body: VoicePreview):
+    """One sentence in an INSTALLED piper voice, as a WAV, for the Settings
+    page's Preview button. Only names `installed_piper_voices` lists — the
+    same rule the dropdown follows — so this can never be pointed at a path."""
+    if body.voice not in tts.installed_piper_voices():
+        return JSONResponse({"success": False, "error": "unknown voice"}, status_code=400)
+    result = await tts.synthesize_chunk("Good evening. This is how I sound.",
+                                        backend=tts.BACKEND_PIPER, voice=body.voice,
+                                        fallback=False)
+    if result is None:
+        return JSONResponse({"success": False, "error": "could not speak"}, status_code=500)
+    return Response(content=result.audio, media_type="audio/wav")
+
 
 @app.post("/api/settings/preferences")
 async def api_save_preferences(body: PreferencesUpdate):

@@ -36,3 +36,9 @@
 #
 #     .venv/bin/python -c "from faster_whisper import WhisperModel; WhisperModel('base.en')"
 faster-whisper>=1.2.0
+# faster-whisper 1.2 calls av.open(metadata_errors=...), which PyAV 19 removed:
+# every transcription failed until this was pinned.
+av<19
+# JARVIS_STT_DEVICE=cuda on Windows: the CUDA libraries ctranslate2 needs.
+nvidia-cublas-cu12; sys_platform == "win32"
+nvidia-cudnn-cu12==9.*; sys_platform == "win32"

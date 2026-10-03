@@ -107,6 +107,7 @@ function buildPanelHTML(): string {
           </div>
 
           <div class="settings-actions">
+            <button class="settings-btn" id="btn-preview-voice">Preview</button>
             <button class="settings-btn primary" id="btn-save-voice">Save Voice</button>
           </div>
           <p class="settings-voice-note" id="tts-voice-note"></p>
@@ -335,6 +336,23 @@ function wireEvents() {
       console.error("[settings] could not save the screen capture switch:", e);
     }
     await loadStatus();
+  });
+
+  // Hear the piper voice in the dropdown before saving it.
+  document.getElementById("btn-preview-voice")?.addEventListener("click", async () => {
+    const voice = (document.getElementById("input-piper-voice") as HTMLSelectElement).value.trim();
+    if (!voice) return;
+    const res = await fetch("/api/settings/voice/preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ voice }),
+    });
+    if (!res.ok) return;
+    const url = URL.createObjectURL(await res.blob());
+    const audio = new Audio(url);
+    audio.volume = Number(localStorage.getItem("jarvis-volume") ?? "100") / 100;
+    audio.onended = () => URL.revokeObjectURL(url);
+    audio.play();
   });
 
   document.getElementById("btn-save-voice")?.addEventListener("click", async () => {

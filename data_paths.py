@@ -140,6 +140,7 @@ KNOWN_TEMPLATE_HASHES = frozenset({
     "092df6a5e43bc5ed0a31e9f79b1f77cc4849754d1f4ab4807bded122ab97ad5f",  # say "start fresh" when a memory is refused
     "445ac66d597deef6512e58e2a6e5e7ac51f795794560aa0d8d39c025d3bbca16",  # look_at_window; address from Settings
     "13547d8ee912b7a52b8d444f18eb60c41139dc520216ef5771fc89d405f4aa6f",  # never harm the machine
+    "ccb73469fc34b50388dde95497fe951f573479542d4f6ba134c0898249dd4ff6",  # PC control, Discord, reminders
 })
 
 # The same list, for the connections file. APPEND the new hash whenever

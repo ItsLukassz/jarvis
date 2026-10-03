@@ -16,12 +16,13 @@ secrets.
 
 from __future__ import annotations
 
-from ..base import ALL_CAPABILITIES, Host
+from ..base import ALL_CAPABILITIES, CAP_PC_CONTROL, Host
 from . import dialogs, launcher, notifications, screen, secrets
 
 MACOS = Host(
     name="macos",
-    capabilities=ALL_CAPABILITIES,
+    # Everything except pc_control.py, which is written against Win32.
+    capabilities=ALL_CAPABILITIES - {CAP_PC_CONTROL},
     notifications=notifications,
     launcher=launcher,
     dialogs=dialogs,

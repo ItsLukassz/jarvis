@@ -36,7 +36,8 @@ def test_windows_declares_only_what_it_has_an_implementation_for():
                                     jp.CAP_BROWSER, jp.CAP_EDITOR,
                                     jp.CAP_SESSION_STEER,
                                     jp.CAP_WINDOW_LIST,
-                                    jp.CAP_SCREEN_CAPTURE}
+                                    jp.CAP_SCREEN_CAPTURE,
+                                    jp.CAP_PC_CONTROL}       # pc_control.py
 
 
 def test_windows_withdraws_only_the_one_tool_it_cannot_do():

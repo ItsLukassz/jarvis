@@ -23,6 +23,7 @@ from .base import (  # noqa: F401  (re-exported: this is the public surface)
     CAP_DIALOG_KEY,
     CAP_EDITOR,
     CAP_NOTIFICATIONS,
+    CAP_PC_CONTROL,
     CAP_SCREEN_CAPTURE,
     CAP_SESSION_STEER,
     CAP_TERMINAL,
