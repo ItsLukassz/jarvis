@@ -871,6 +871,7 @@ def _set_paused(paused: bool) -> None:
     else:
         stt.warm()
         if brain_instance is not None:
+            _retire_on_demand()
             _spawn(brain_instance.start())
 _STOP_PHRASE_RE = re.compile(
     r"[\s,.!-]*\b(?:that'?s|thats|that is)\s+it[\s,.!-]+(\w+)[\s,.!?-]*\Z", re.IGNORECASE)
@@ -997,6 +998,9 @@ class ConnectionsReport:
     """
     servers: dict = field(default_factory=dict)
     problems: list = field(default_factory=list)
+    # Declared with `"onDemand": true` and currently OFF: not handed to the
+    # brain (its tools cost context on every turn) until `enable_connection`.
+    on_demand: list = field(default_factory=list)
 
 
 def _read_connections_file() -> tuple[dict, list[str]]:
@@ -1065,6 +1069,57 @@ def declared_connections() -> ConnectionsReport:
 # the brain started describes a JARVIS that does not exist yet.
 LAST_CONNECTIONS = ConnectionsReport()
 
+# On-demand connections: declared with `"onDemand": true`, off at start so
+# their tools cost no context (chrome-devtools alone is ~10,000 tokens a
+# turn). `enable_connection` stages a name; once that turn has been spoken the
+# brain is restarted with it and the user's request is put to it again. They
+# go back off at the brain's next natural restart -- a rotation, a resume
+# from pause -- so a conversation is never interrupted to save tokens.
+_on_demand_enabled: set[str] = set()
+_staged_enable: list[str] = []
+
+
+def _refresh_connections() -> None:
+    """Rewrite mcp.json for the current on-demand set and point the brain's
+    allowlist at it. Takes effect at the brain's next start."""
+    _write_mcp_config(jarvis_memory.ensure_layout())
+    if brain_instance is not None:
+        brain_instance.config.connections = sorted(LAST_CONNECTIONS.servers)
+
+
+def _retire_on_demand() -> None:
+    """Called just before the brain restarts anyway: switch them back off."""
+    if _on_demand_enabled:
+        log.info("on-demand connections off again: %s", ", ".join(sorted(_on_demand_enabled)))
+        _on_demand_enabled.clear()
+        _refresh_connections()
+
+
+async def _perform_staged_enable(text: str) -> None:
+    names = list(_staged_enable)
+    _staged_enable.clear()
+    _on_demand_enabled.update(names)
+    log.info("on-demand connections on: %s", ", ".join(names))
+    _refresh_connections()
+    await brain_instance.stop()
+    if await brain_instance.start():
+        _spawn(_handle_utterance(text))          # the request, now that he can do it
+    elif speech is not None:
+        await speech.say("I couldn't switch that on, sir.", Priority.NORMAL)
+
+
+async def tool_enable_connection(args: dict) -> str:
+    name = str(args.get("name") or "").strip()
+    if name in LAST_CONNECTIONS.servers:
+        return "That connection is already on — use its tools."
+    if name not in LAST_CONNECTIONS.on_demand:
+        known = ", ".join(LAST_CONNECTIONS.on_demand) or "none"
+        return f"There is no on-demand connection by that name. On demand: {known}."
+    if name not in _staged_enable:
+        _staged_enable.append(name)
+    return ("Switching it on. It takes a few seconds, and the user's request will be put "
+            "to you again automatically once it is ready — do not ask him to repeat it. "
+            "Say only: One moment, sir.")
 
 def _write_mcp_config(home: Path) -> Path:
     """Generate the brain's mcp.json: JARVIS's own tools, plus whatever the
@@ -1084,6 +1139,14 @@ def _write_mcp_config(home: Path) -> Path:
     connect_host = _tool_connect_host(bind_host)
 
     LAST_CONNECTIONS = declared_connections()
+    # On-demand servers are left out until switched on; the `onDemand` key is
+    # JARVIS's own and never reaches the brain's config.
+    declared = LAST_CONNECTIONS.servers
+    LAST_CONNECTIONS.on_demand = sorted(
+        n for n, e in declared.items() if e.get("onDemand") and n not in _on_demand_enabled)
+    LAST_CONNECTIONS.servers = {
+        n: {k: v for k, v in e.items() if k != "onDemand"}
+        for n, e in declared.items() if n not in LAST_CONNECTIONS.on_demand}
     for problem in LAST_CONNECTIONS.problems:
         log.warning("connections: %s", problem)
     if LAST_CONNECTIONS.servers:
@@ -1308,6 +1371,7 @@ async def _start_fresh() -> None:
         # with it, which is exactly what the memory-writer gate exists to stop.
         _pending_handover, _handover_collected = None, False
         try:
+            _retire_on_demand()
             await brain_instance.rotate(handover=None)
         except Exception as e:
             log.error(f"fresh start failed: {e}", exc_info=True)
@@ -1363,6 +1427,7 @@ async def _maybe_rotate() -> None:
                     "No handover was written — the outgoing brain did not answer.",
                     reason="rotation-silent")
         try:
+            _retire_on_demand()
             rotated = await brain_instance.rotate(handover=_pending_handover)
         except Exception as e:
             log.error(f"rotation failed: {e}", exc_info=True)
@@ -1955,15 +2020,23 @@ async def _handle_utterance(text: str) -> None:
             await speech.wait_for(utt, timeout=TURN_SETTLE_TIMEOUT)
             await _perform_staged_steers()
             await _perform_staged_dialogs()
-        # Last of all, and only now: the pause is genuine, the mouth is free
-        # and nothing the user is waiting on is queued behind this. Rotation is
-        # bookkeeping — it must not be able to take down the turn it follows.
-        try:
-            await _maybe_rotate()
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            log.error(f"rotation at the pause failed: {e}", exc_info=True)
+        # A connection switched on mid-turn: restart the brain with it and
+        # put the same request to it again. No rotation after it — the brain
+        # is brand new. (An if/else, not a `return`: a return inside `finally`
+        # would swallow a cancellation.)
+        if _staged_enable:
+            await speech.wait_for(utt, timeout=TURN_SETTLE_TIMEOUT)
+            await _perform_staged_enable(text)
+        else:
+            # Last of all, and only now: the pause is genuine, the mouth is free
+            # and nothing the user is waiting on is queued behind this. Rotation is
+            # bookkeeping — it must not be able to take down the turn it follows.
+            try:
+                await _maybe_rotate()
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                log.error(f"rotation at the pause failed: {e}", exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -2721,6 +2794,9 @@ TAINT_EXEMPT_TOOLS = {
     "set_reminder": (
         "it schedules the user's own words to be said back later and "
         "answers with a clock time computed here; nothing foreign is read"),
+    "enable_connection": (
+        "it answers with a fixed sentence or the names of servers the USER "
+        "declared in his own connections.json; nothing foreign is read"),
     "list_projects": (
         "it emits project names and directory paths off the session roster "
         "and no file content, no transcript text and no page — and it is how "
@@ -6790,6 +6866,9 @@ def tool_connections(args: dict) -> str:
         lines.append(
             f"Nothing but my own tools, sir. Services go in "
             f"{data_paths.connections_path()} — one entry each, then restart me.")
+    if LAST_CONNECTIONS.on_demand:
+        lines.append("Off until needed (switch on with enable_connection): "
+                     + ", ".join(LAST_CONNECTIONS.on_demand) + ".")
     if failed:
         lines.append("In your connections file but would NOT start: "
                      + ", ".join(failed) + ".")
@@ -6814,6 +6893,9 @@ def tool_connections(args: dict) -> str:
 
 
 TOOL_HANDLERS["connections"] = tool_connections
+TOOL_HANDLERS["enable_connection"] = tool_enable_connection
+# It restarts the brain with more tools: only ever on the user's own turn.
+ACTING_TOOLS.add("enable_connection")
 # Deliberately NOT an acting tool: it starts nothing and reaches nothing. It
 # is how a user checks their own setup, and a check that only works when the
 # user happens to be mid-sentence is not a check.

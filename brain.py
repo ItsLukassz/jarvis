@@ -79,6 +79,7 @@ ALLOWED_TOOLS = [
     "mcp__jarvis__write_clipboard",
     "mcp__jarvis__pc_status",
     "mcp__jarvis__set_reminder",
+    "mcp__jarvis__enable_connection",
     "mcp__jarvis__github_repo",
     "mcp__jarvis__usage_status",
     "mcp__jarvis__connections",

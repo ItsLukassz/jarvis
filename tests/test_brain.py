@@ -69,6 +69,7 @@ def test_command_has_exact_flags(tmp_path):
         "mcp__jarvis__set_volume,mcp__jarvis__set_audio_output,"
         "mcp__jarvis__read_clipboard,mcp__jarvis__write_clipboard,"
         "mcp__jarvis__pc_status,mcp__jarvis__set_reminder,"
+        "mcp__jarvis__enable_connection,"
         "mcp__jarvis__github_repo,"
         "mcp__jarvis__usage_status,mcp__jarvis__connections,"
         "mcp__jarvis__enable_session_inbox,"

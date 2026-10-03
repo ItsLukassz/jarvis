@@ -513,6 +513,19 @@ TOOL_SPECS = [
                         "required": ["message"]},
     },
     {
+        "name": "enable_connection",
+        "description": ("Switch on a connection that is kept off to save context. "
+                        "`chrome-devtools` lets you work the user's OWN Chrome — click, "
+                        "type, read the pages he is logged in to. Call it when he asks "
+                        "for something in his browser and you have no tool for it; his "
+                        "request is put to you again once it is on. `connections` lists "
+                        "what can be switched on."),
+        "inputSchema": {"type": "object",
+                        "properties": {"name": {"type": "string",
+                                                "description": "The connection, e.g. chrome-devtools."}},
+                        "required": ["name"]},
+    },
+    {
         "name": "github_repo",
         "description": (
             "A repository on GitHub: what it is, its licence, its description "
