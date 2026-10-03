@@ -160,7 +160,8 @@ def _never_touch_the_real_projects_folder(monkeypatch, tmp_path):
 # who actually uses the local backend would have hit this on every run.
 _DEVELOPER_PREFERENCES = ("JARVIS_STT_BACKEND", "JARVIS_STT_MODEL",
                           "JARVIS_TTS_BACKEND", "JARVIS_TTS_VOICE",
-                          "JARVIS_PIPER_VOICE", "JARVIS_PIPER_BIN")
+                          "JARVIS_PIPER_VOICE", "JARVIS_PIPER_BIN",
+                          "HONORIFIC", "USER_NAME", "JARVIS_WAKE_WORD", "JARVIS_WAKE_FOLLOW_UP", "JARVIS_QUIET_ORIGINS", "JARVIS_STT_DEVICE")
 
 
 @pytest.fixture(autouse=True)

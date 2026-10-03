@@ -82,6 +82,7 @@ def test_granted_tools_drops_what_the_platform_cannot_do(as_host):
     as_host(fake_host(without={jp.CAP_SCREEN_CAPTURE, jp.CAP_DIALOG_KEY}))
     granted = brain.granted_tools([])
     assert "mcp__jarvis__look_at_screen" not in granted
+    assert "mcp__jarvis__look_at_window" not in granted
     assert "mcp__jarvis__answer_dialog" not in granted
     assert "mcp__jarvis__what_is_on_screen" in granted     # window list survives
     assert "mcp__jarvis__spawn_run" in granted

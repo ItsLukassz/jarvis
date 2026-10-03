@@ -115,6 +115,9 @@ const capture = createCapture(
   },
   (event: string) => {
     socket.send({ type: "mic", text: `capture: ${event}` });
+  },
+  (data: string) => {
+    socket.send({ type: "audio_peek", data });
   }
 );
 
@@ -228,6 +231,9 @@ socket.onMessage((msg) => {
   } else if (type === "stop") {
     audioPlayer.stop();
     transition(isMuted ? "idle" : "listening");
+  } else if (type === "end_utterance") {
+    // The server heard "that's it, Jarvis": stop listening to this command now.
+    capture.endNow();
   } else if (type === "drop_queued") {
     audioPlayer.dropQueued();
   } else if (type === "status") {
@@ -297,6 +303,13 @@ btnMute.addEventListener("click", (e) => {
     voiceInput.resume();
     transition("listening");
   }
+  // With the local (whisper) backend the page's `capture` is the ear, not
+  // `voiceInput` -- pausing only the latter left him hearing everything.
+  usingLocalStt().then((local) => {
+    if (!local) return;
+    if (isMuted) capture.stop();
+    else capture.start();
+  });
 });
 
 btnMenu.addEventListener("click", (e) => {

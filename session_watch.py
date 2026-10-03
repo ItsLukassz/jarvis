@@ -546,8 +546,14 @@ class SessionState:
     @property
     def announceable(self) -> bool:
         """`fresh` sessions are never spoken about unprompted: nobody has
-        started them, so 'chitauri needs you' would be nonsense."""
-        return self.state not in (FRESH,)
+        started them, so 'chitauri needs you' would be nonsense.
+
+        JARVIS_QUIET_ORIGINS (comma-separated, e.g. "desktop") silences whole
+        origins: a Claude desktop-app chat the user is already looking at
+        does not need announcing when it finishes."""
+        quiet = {o.strip().lower() for o in
+                 os.getenv("JARVIS_QUIET_ORIGINS", "").split(",") if o.strip()}
+        return self.state not in (FRESH,) and self.origin not in quiet
 
     @property
     def needs_a_human_hand(self) -> bool:

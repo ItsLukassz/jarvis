@@ -68,6 +68,7 @@ ALLOWED_TOOLS = [
     "mcp__jarvis__look_at_page",
     "mcp__jarvis__what_is_on_screen",
     "mcp__jarvis__look_at_screen",
+    "mcp__jarvis__look_at_window",
     "mcp__jarvis__github_repo",
     "mcp__jarvis__usage_status",
     "mcp__jarvis__connections",
@@ -268,6 +269,26 @@ def plain_phrase(text) -> Optional[str]:
     """`text` if it is an ordinary short phrase, else None."""
     value = str(text)
     return value if _PLAIN_PHRASE_RE.fullmatch(value) else None
+
+
+def address_line(said_name: Optional[str]) -> str:
+    """How to address the user, from the Settings page's Name and Honorific
+    (USER_NAME / HONORIFIC). The persona's examples say "sir" as a stand-in;
+    this line says what to use instead. With a name set, the name is the usual
+    form and the honorific the occasional one.
+    """
+    honorific = plain_phrase((os.getenv("HONORIFIC") or "sir").strip()) or "sir"
+    if honorific.lower() == "none":
+        if said_name:
+            return (f" Address the user by name, {said_name}, now and then; use no "
+                    f"honorific, and leave out the \"sir\" the examples in your notes use.")
+        return " Use no honorific; leave out the \"sir\" the examples in your notes use."
+    if said_name:
+        return (f" Address the user as {said_name} most of the time, and only now and "
+                f"then as \"{honorific}\". Where the examples in your notes say \"sir\", "
+                f"use {said_name} or \"{honorific}\" instead.")
+    return (f" Address the user as \"{honorific}\". Where the examples in your notes "
+            f"say \"sir\", use \"{honorific}\".")
 
 # The handover is MODEL OUTPUT, and it used to be spliced into the next
 # generation's system prompt raw, introduced as "your own note from the
@@ -717,9 +738,13 @@ class Brain:
         # `USER_NAME` out of the `.env` the settings endpoints write. It is
         # the user's own value and it is still a header line: an ordinary
         # name goes in, anything else is left out rather than substituted.
-        said_name = plain_phrase(self.config.user_name) if self.config.user_name else None
+        # Read live from the environment, which the Settings page updates, so
+        # a change applies from the next brain generation without a restart.
+        user_name = os.getenv("USER_NAME", "") or self.config.user_name
+        said_name = plain_phrase(user_name) if user_name else None
         who = f" The user's name is {said_name}." if said_name else ""
-        base = f"Session started {now}.{who} This is brain generation {self.generation}."
+        base = (f"Session started {now}.{who}{address_line(said_name)} "
+                f"This is brain generation {self.generation}.")
         # Said here as well as in CLAUDE.md, on purpose. `sync_persona` now
         # carries template changes into an UNEDITED brain home, but a user who
         # has edited their CLAUDE.md keeps it untouched for ever — and this

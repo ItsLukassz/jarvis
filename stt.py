@@ -42,6 +42,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import sys
+import threading
 import re
 import tempfile
 from pathlib import Path
@@ -197,6 +199,36 @@ def backends_ready() -> dict[str, bool]:
 # reloads 141 MB on every invocation and pays 0.59s fixed per call, which is
 # MORE than the transcription itself. A long-lived server pays it once.
 _MODEL_CACHE: dict[str, object] = {}
+_MODEL_LOCK = threading.Lock()
+
+
+def _make_whisper(name: str):
+    """The WhisperModel, on the GPU when JARVIS_STT_DEVICE=cuda.
+
+    Measured on an RTX 3060 Ti: medium.en on CUDA (float16) transcribes a
+    sentence in 0.8s against base.en's 1.9s on an i5-4670K, and is far more
+    accurate on accents and on his name. The CUDA libraries come from the
+    nvidia-cublas-cu12 / nvidia-cudnn-cu12 wheels in this venv, whose DLL
+    folders Windows will not search unless told. Any CUDA failure falls back
+    to the CPU rather than leaving him deaf.
+    """
+    from faster_whisper import WhisperModel                    # noqa: PLC0415
+    device = (os.getenv("JARVIS_STT_DEVICE") or "cpu").strip().lower()
+    if device == "cuda":
+        import glob                                            # noqa: PLC0415
+        for d in glob.glob(os.path.join(sys.prefix, "Lib", "site-packages", "nvidia", "*", "bin")):
+            try:
+                os.add_dll_directory(d)
+            except (AttributeError, OSError):
+                pass
+            os.environ["PATH"] = d + os.pathsep + os.environ.get("PATH", "")
+        try:
+            model = WhisperModel(name, device="cuda", compute_type="float16")
+            log.info(f"whisper {name} loaded on the GPU")
+            return model
+        except Exception as e:
+            log.warning(f"whisper on CUDA failed ({e!r}); using the CPU")
+    return WhisperModel(name, device="cpu", compute_type="int8")
 
 
 def _loaded_model(name: str):
@@ -206,20 +238,50 @@ def _loaded_model(name: str):
     suite may load a model or reach the network, and `faster-whisper` is not
     installed on the macOS gate at all.
     """
+    with _MODEL_LOCK:      # the startup preload and a first sentence must not load it twice
+        return _loaded_model_locked(name)
+
+
+def _loaded_model_locked(name: str):
     runner = _MODEL_CACHE.get(name)
     if runner is None:
-        from faster_whisper import WhisperModel                # noqa: PLC0415
-        model = WhisperModel(name, device="cpu", compute_type="int8")
+        model = _make_whisper(name)
 
         def runner(path: str, prompt: Optional[str]) -> str:
+            # vad_filter: Silero VAD cuts non-speech out before whisper sees
+            # it. Without it a noisy room (peaks above capture.ts's
+            # SPEECH_LEVEL) sends clips of near-silence, and whisper invents
+            # stock phrases from them -- "Thank you very much.", "All right.",
+            # "Good job." -- which JARVIS then answers as if spoken to.
+            # "Jarvis." first, so the recogniser expects his name -- it is
+            # the wake word, and unprimed it comes out "Jarmus" or "Jairus".
             segments, _info = model.transcribe(
-                path, language="en", beam_size=5, initial_prompt=prompt)
+                path, language="en", beam_size=5,
+                initial_prompt="Jarvis." + (f" {prompt}" if prompt else ""),
+                vad_filter=True, condition_on_previous_text=False)
             # `transcribe` returns a GENERATOR — the work happens here, not
             # above, which is also where the latency figures were measured.
-            return " ".join(s.text for s in segments)
+            return " ".join(s.text for s in segments
+                            if not (s.no_speech_prob > 0.6 and s.avg_logprob < -0.7))
 
         _MODEL_CACHE[name] = runner
     return runner
+
+
+def warm() -> None:
+    """Load the whisper model in the background at startup, so the first
+    sentence does not wait for it (medium.en takes several seconds to load).
+    Only an already-downloaded model; never raises."""
+    import threading                                           # noqa: PLC0415
+
+    def load() -> None:
+        try:
+            name = resolve_model()
+            if _faster_whisper_available() and model_is_cached(name):
+                _loaded_model(name)
+        except Exception as e:
+            log.warning(f"could not preload whisper: {e!r}")
+    threading.Thread(target=load, name="whisper-warm", daemon=True).start()
 
 
 async def transcribe(audio: bytes, *, projects=None,

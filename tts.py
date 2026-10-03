@@ -46,6 +46,7 @@ import re
 import shutil
 import sys
 import tempfile
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -185,6 +186,38 @@ def resolve_rate(rate: Optional[int] = None) -> int:
         return 0
 
 
+def _apply_honorific(text: str) -> str:
+    """Address the user the way the Settings page says, wherever a canned line
+    or the model says "sir". Dozens of fixed lines in server.py hard-code
+    "sir"; this is the one place all of them pass through before being heard.
+
+    From Settings: Name (USER_NAME) and Honorific (HONORIFIC: sir / ma'am /
+    none). With a name set, each "sir" becomes the name about three times in
+    four and the honorific otherwise -- the same "mostly by name" rule the
+    brain's launch prompt gives. Honorific "none" drops the word (and the
+    comma before it) when there is no name to say instead.
+    """
+    import random
+    honorific = (os.getenv("HONORIFIC") or "sir").strip() or "sir"
+    name = (os.getenv("USER_NAME") or "").strip()
+    none = honorific.lower() == "none"
+    if not name and honorific.lower() == "sir":
+        return text
+    if not name and none:
+        # "Sir, the build is done." -> "The build is done."; "Done, sir." -> "Done."
+        text = re.sub(r"\bSir\s*[,—–-]\s*(\w)", lambda m: m.group(1).upper(), text)
+        return re.sub(r",?\s*\b[Ss]ir\b", "", text)
+
+    def pick(m: re.Match) -> str:
+        if name and (none or random.random() < 0.75):
+            word = name
+        else:
+            word = honorific
+        return word[:1].upper() + word[1:] if m.group()[0] == "S" else word
+
+    return re.sub(r"\b[Ss]ir\b", pick, text)
+
+
 def resolve_piper_voice(voice: Optional[str] = None) -> str:
     return (voice or os.getenv("JARVIS_PIPER_VOICE") or DEFAULT_PIPER_VOICE).strip()
 
@@ -294,7 +327,7 @@ async def synthesize_chunk(text: str, *, api_key: str = "", voice_id: str = "",
     a configured backend that fails hands over to `say` (see below), so it
     means macOS itself would not speak either.
     """
-    text = speakable(text).strip()
+    text = _apply_honorific(speakable(text).strip())
     if not text:
         return None
     chosen = resolve_backend(backend)
@@ -366,13 +399,81 @@ async def _synthesize_piper(text: str, *, voice: Optional[str],
                   f"--download-dir {data_paths.voices_dir()} {wanted}`")
         return None
 
-    def argv(out: Path) -> list[str]:
-        return [binary, "-m", str(model), "-f", str(out)]
+    result = await _synthesize_piper_resident(text, model=model, timeout=timeout)
+    if result is None:
+        def argv(out: Path) -> list[str]:
+            return [binary, "-m", str(model), "-f", str(out)]
 
-    result = await _render_wav(argv, text=text, timeout=timeout, label="piper")
+        result = await _render_wav(argv, text=text, timeout=timeout, label="piper")
     if result is not None:
         result.backend = BACKEND_PIPER
     return result
+
+
+# Piper kept loaded in this process, rather than a `piper` process per chunk.
+# Measured on an i5-4670K (Windows) with en_GB-jenny_dioco-medium: the
+# subprocess costs ~5.8s per sentence, nearly all of it onnxruntime start-up
+# and model load; the resident voice speaks the same sentence in 0.2-0.3s
+# after a one-time ~9s load. Any failure here returns None and the caller
+# falls back to the subprocess, so this can only ever make him faster.
+_piper_voices: dict[str, object] = {}
+_piper_lock = threading.Lock()
+
+
+def _resident_piper_voice(model: Path):
+    key = str(model)
+    with _piper_lock:
+        voice = _piper_voices.get(key)
+        if voice is None:
+            from piper import PiperVoice
+            t0 = time.monotonic()
+            voice = PiperVoice.load(key)
+            _piper_voices[key] = voice
+            log.info(f"piper voice {model.stem!r} loaded in-process "
+                     f"in {time.monotonic() - t0:.1f}s")
+        return voice
+
+
+def _render_piper_resident(text: str, model: Path) -> bytes:
+    import io
+    import wave
+    voice = _resident_piper_voice(model)
+    buf = io.BytesIO()
+    with _piper_lock:                      # one ONNX session, one sentence at a time
+        with wave.open(buf, "wb") as wav:
+            voice.synthesize_wav(text, wav)
+    return buf.getvalue()
+
+
+async def _synthesize_piper_resident(text: str, *, model: Path,
+                                     timeout: float) -> Optional[SynthResult]:
+    t0 = time.monotonic()
+    try:
+        # The first call loads the model; give that its own allowance rather
+        # than failing the sentence and paying the subprocess as well.
+        allowance = timeout if str(model) in _piper_voices else max(timeout, 60.0)
+        audio = await asyncio.wait_for(
+            asyncio.to_thread(_render_piper_resident, text, model), timeout=allowance)
+    except Exception as e:
+        log.warning(f"in-process piper failed ({e!r}); using the piper subprocess")
+        return None
+    if not audio:
+        return None
+    total = time.monotonic() - t0
+    return SynthResult(audio, total, total)
+
+
+def warm_piper() -> None:
+    """Load the configured piper voice in the background, so the first thing
+    JARVIS says does not wait for the model. Never raises."""
+    def load() -> None:
+        try:
+            model = piper_model_path()
+            if model is not None:
+                _resident_piper_voice(model)
+        except Exception as e:
+            log.warning(f"could not preload the piper voice: {e!r}")
+    threading.Thread(target=load, name="piper-warm", daemon=True).start()
 
 
 async def _render_wav(make_argv, *, text: str, timeout: float,

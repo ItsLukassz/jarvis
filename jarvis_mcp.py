@@ -412,6 +412,25 @@ TOOL_SPECS = [
         },
     },
     {
+        "name": "look_at_window",
+        "description": (
+            "SEE one particular app's window as an image, even when it is "
+            "behind other windows: 'what's on Discord', 'what song is "
+            "Spotify on', 'what's in my other Chrome window'. Name the app "
+            "(as what_is_on_screen lists it) or words from its title. Use "
+            "this rather than look_at_screen when he means one app. Only "
+            "when he has just asked; costs about a thousand words of context. "
+            "A minimized window cannot be seen."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "app": {"type": "string",
+                        "description": "App name or words from the window title, e.g. 'Discord'."},
+            },
+            "required": ["app"],
+        },
+    },
+    {
         "name": "github_repo",
         "description": (
             "A repository on GitHub: what it is, its licence, its description "

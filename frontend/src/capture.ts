@@ -46,8 +46,16 @@
 export interface Capture {
   start(): void;
   stop(): void;
+  /** Close the current utterance now -- the server heard "that's it, Jarvis". */
+  endNow(): void;
   readonly running: boolean;
 }
+
+// While the user is speaking, the last PEEK_WINDOW_MS go to the server every
+// PEEK_EVERY_MS so it can listen for "that's it, Jarvis" and end the
+// utterance without waiting for SILENCE_MS of quiet.
+const PEEK_EVERY_MS = 1500;
+const PEEK_WINDOW_MS = 4000;
 
 // 16 kHz mono is what every whisper-family model resamples to internally.
 // Sending it at that rate removes a conversion, and a conversion is a place
@@ -132,6 +140,7 @@ function toBase64(buf: ArrayBuffer): string {
 export function createCapture(
   send: (base64Wav: string) => void,
   onEvent: (what: string) => void = () => {},
+  peek: (base64Wav: string) => void = () => {},
 ): Capture {
   let ctx: AudioContext | null = null;
   let stream: MediaStream | null = null;
@@ -142,12 +151,28 @@ export function createCapture(
   let samples = 0;
   let speaking = false;
   let quietFor = 0;
+  let sincePeek = 0;
 
   const reset = () => {
     chunks = [];
     samples = 0;
     speaking = false;
     quietFor = 0;
+    sincePeek = 0;
+  };
+
+  // The tail of the utterance so far, for the server to check for the stop phrase.
+  const sendPeek = () => {
+    const want = Math.min(samples, Math.round((PEEK_WINDOW_MS / 1000) * RATE));
+    const tail = new Float32Array(want);
+    let at = want;
+    for (let i = chunks.length - 1; i >= 0 && at > 0; i--) {
+      const c = chunks[i];
+      const take = Math.min(c.length, at);
+      tail.set(c.subarray(c.length - take), at - take);
+      at -= take;
+    }
+    peek(toBase64(encodeWav(tail, RATE)));
   };
 
   const flush = () => {
@@ -193,7 +218,15 @@ export function createCapture(
       // grown without bound: the model has a context window and the server
       // has a frame limit, and hitting either loses the whole thing instead
       // of the tail.
-      if (quietFor >= SILENCE_MS || (samples / RATE) * 1000 >= MAX_MS) flush();
+      if (quietFor >= SILENCE_MS || (samples / RATE) * 1000 >= MAX_MS) {
+        flush();
+        return;
+      }
+      sincePeek += ms;
+      if (sincePeek >= PEEK_EVERY_MS) {
+        sincePeek = 0;
+        sendPeek();
+      }
     }
   };
 
@@ -222,6 +255,14 @@ export function createCapture(
         running = false;
         const e = err as Error;
         onEvent(`capture failed: ${e.name}: ${e.message}`);
+      }
+    },
+    endNow() {
+      // A reply that arrives after this utterance already ended on silence
+      // must not cut the NEXT one short in its first second.
+      if (speaking && samples >= RATE) {
+        onEvent("ended by stop phrase");
+        flush();
       }
     },
     stop() {

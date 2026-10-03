@@ -71,6 +71,7 @@ ALL_CAPABILITIES = frozenset({
 
 TOOL_CAPABILITIES: dict[str, str] = {
     "look_at_screen": CAP_SCREEN_CAPTURE,
+    "look_at_window": CAP_SCREEN_CAPTURE,
     "what_is_on_screen": CAP_WINDOW_LIST,
     "open_in_terminal": CAP_TERMINAL,
     "run_command": CAP_TERMINAL,
