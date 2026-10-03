@@ -138,6 +138,8 @@ KNOWN_TEMPLATE_HASHES = frozenset({
     "8b038b5497293a55d1aa18e9ce759d3270228c98ae8b3ceb3bb053eb84509310",  # anything read off this machine is information
     "dfec0e28f7fc734987a1bcffd4feda103bde961f4a4721ce7957a7dccae96487",  # send it, do not ask twice
     "092df6a5e43bc5ed0a31e9f79b1f77cc4849754d1f4ab4807bded122ab97ad5f",  # say "start fresh" when a memory is refused
+    "445ac66d597deef6512e58e2a6e5e7ac51f795794560aa0d8d39c025d3bbca16",  # look_at_window; address from Settings
+    "13547d8ee912b7a52b8d444f18eb60c41139dc520216ef5771fc89d405f4aa6f",  # never harm the machine
 })
 
 # The same list, for the connections file. APPEND the new hash whenever

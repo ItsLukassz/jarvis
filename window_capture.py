@@ -94,7 +94,7 @@ def find(query: str) -> Found:
     proto = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
     user32.EnumWindows(proto(visit), 0)
     if best is None:
-        raise WindowCaptureError(f"I can't find an open window for {query!r}")
+        raise WindowCaptureError("I can't find an open window by that name")
     return best[1]
 
 
@@ -123,13 +123,12 @@ def capture(query: str) -> Shot:
     gdi32.DeleteDC.argtypes = (wintypes.HDC,)
 
     if user32.IsIconic(win.hwnd):
-        raise WindowCaptureError(f"{win.app or 'That window'} is minimized, so there's "
-                                 f"nothing on it to see")
+        raise WindowCaptureError("That window is minimized, so there's nothing on it to see")
     rect = wintypes.RECT()
     user32.GetWindowRect(win.hwnd, ctypes.byref(rect))
     w, h = rect.right - rect.left, rect.bottom - rect.top
     if w <= 0 or h <= 0:
-        raise WindowCaptureError(f"{win.app or 'That window'} has no size to capture")
+        raise WindowCaptureError("That window has no size to capture")
 
     screen_dc = user32.GetDC(None)
     mem_dc = gdi32.CreateCompatibleDC(screen_dc)
@@ -137,7 +136,7 @@ def capture(query: str) -> Shot:
     old = gdi32.SelectObject(mem_dc, bmp)
     try:
         if not user32.PrintWindow(win.hwnd, mem_dc, _PW_RENDERFULLCONTENT):
-            raise WindowCaptureError(f"{win.app or 'That app'} wouldn't let me capture it")
+            raise WindowCaptureError("That app wouldn't let me capture it")
         header = _BITMAPINFOHEADER(ctypes.sizeof(_BITMAPINFOHEADER), w, -h, 1, 32, _BI_RGB,
                                    0, 0, 0, 0, 0)
         pixels = (ctypes.c_ubyte * (w * h * 4))()
@@ -151,8 +150,8 @@ def capture(query: str) -> Shot:
 
     img = np.frombuffer(pixels, dtype=np.uint8).reshape(h, w, 4)[:, :, 2::-1]   # BGRA -> RGB
     if not img.any():
-        raise WindowCaptureError(f"{win.app or 'That app'} came back blank — some games "
-                                 f"and video players can't be captured this way")
+        raise WindowCaptureError("That app came back blank — some games and video players "
+                                 "can't be captured this way")
     if w > MAX_WIDTH:                    # integer-step shrink: cheap, and plenty legible
         step = -(-w // MAX_WIDTH)
         img = img[::step, ::step]

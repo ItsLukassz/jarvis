@@ -19,6 +19,8 @@ import "./style.css";
 type State = "idle" | "listening" | "thinking" | "speaking" | "compacting";
 let currentState: State = "idle";
 let isMuted = false;
+let isPaused = false;
+const earsOff = () => isMuted || isPaused;
 
 const statusEl = document.getElementById("status-text")!;
 const errorEl = document.getElementById("error-text")!;
@@ -56,6 +58,16 @@ const socket = createSocket(WS_URL);
 const audioPlayer = createAudioPlayer();
 orb.setAnalyser(audioPlayer.getAnalyser());
 
+// Volume slider, remembered across restarts.
+const volumeEl = document.getElementById("volume") as HTMLInputElement;
+volumeEl.value = localStorage.getItem("jarvis-volume") ?? "100";
+audioPlayer.setVolume(Number(volumeEl.value) / 100);
+volumeEl.addEventListener("input", () => {
+  audioPlayer.setVolume(Number(volumeEl.value) / 100);
+  localStorage.setItem("jarvis-volume", volumeEl.value);
+});
+volumeEl.addEventListener("click", (e) => e.stopPropagation());
+
 let muteMicDuringSpeech = false;
 
 function transition(newState: State) {
@@ -66,7 +78,7 @@ function transition(newState: State) {
   orb.setState(newState as OrbState);
   updateStatus(newState);
 
-  if (isMuted) return;
+  if (earsOff()) return;
   if (newState === "speaking" && muteMicDuringSpeech) {
     voiceInput.pause();
   } else {
@@ -192,7 +204,7 @@ function hush() {
   // Locally first: the round trip is real and silence should be instant.
   audioPlayer.stop();
   socket.send({ type: "hush" });
-  transition(isMuted ? "idle" : "listening");
+  transition(earsOff() ? "idle" : "listening");
 }
 
 hushBtn.addEventListener("click", hush);
@@ -230,7 +242,7 @@ socket.onMessage((msg) => {
     if (msg.text) console.log("[JARVIS]", msg.text);
   } else if (type === "stop") {
     audioPlayer.stop();
-    transition(isMuted ? "idle" : "listening");
+    transition(earsOff() ? "idle" : "listening");
   } else if (type === "end_utterance") {
     // The server heard "that's it, Jarvis": stop listening to this command now.
     capture.endNow();
@@ -241,7 +253,7 @@ socket.onMessage((msg) => {
     if (state === "thinking") transition("thinking");
     else if (state === "speaking") transition("speaking");
     else if (state === "compacting") transition("compacting");
-    else if (state === "idle") transition(isMuted ? "idle" : "listening");
+    else if (state === "idle") transition(earsOff() ? "idle" : "listening");
   } else if (type === "text") {
     // A chunk TTS could not voice: show it instead of losing it
     console.log("[JARVIS]", msg.text);
@@ -292,24 +304,48 @@ const menuDropdown = document.getElementById("menu-dropdown")!;
 const btnRestart = document.getElementById("btn-restart")!;
 const btnFixSelf = document.getElementById("btn-fix-self")!;
 
-btnMute.addEventListener("click", (e) => {
-  e.stopPropagation();
-  isMuted = !isMuted;
-  btnMute.classList.toggle("muted", isMuted);
-  if (isMuted) {
+// Mute and Pause both close the ears; Pause also freezes the brain.
+function syncEars() {
+  const off = earsOff();
+  // The server is told too, so anything already on its way -- a sentence
+  // being transcribed at the moment of the click -- is dropped, not answered.
+  socket.send({ type: "mute", muted: off });
+  if (off) {
     voiceInput.pause();
+    micMonitor.pause();            // let go of the microphone entirely
     transition("idle");
   } else {
     voiceInput.resume();
+    micMonitor.resume();
     transition("listening");
   }
   // With the local (whisper) backend the page's `capture` is the ear, not
   // `voiceInput` -- pausing only the latter left him hearing everything.
   usingLocalStt().then((local) => {
     if (!local) return;
-    if (isMuted) capture.stop();
+    if (off) capture.stop(true);
     else capture.start();
   });
+}
+
+btnMute.addEventListener("click", (e) => {
+  e.stopPropagation();
+  isMuted = !isMuted;
+  btnMute.classList.toggle("muted", isMuted);
+  syncEars();
+});
+
+// Pause: the brain process stops and the speech model leaves the GPU, so he
+// costs the machine almost nothing. Resuming brings both back in seconds.
+const btnPause = document.getElementById("btn-pause")!;
+btnPause.addEventListener("click", (e) => {
+  e.stopPropagation();
+  isPaused = !isPaused;
+  btnPause.classList.toggle("muted", isPaused);
+  btnPause.title = isPaused ? "Resume JARVIS" : "Pause JARVIS (frees CPU, memory and GPU)";
+  orb.setPaused(isPaused);
+  socket.send({ type: "pause", paused: isPaused });
+  syncEars();
 });
 
 btnMenu.addEventListener("click", (e) => {

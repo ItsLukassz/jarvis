@@ -1671,7 +1671,9 @@ def _exits_leaving_a_grandchild(tmp_path: Path, name: str,
         "sys.stdout.write(open(%r).readline())\n"
         "sys.stdout.write(%r + '\\n')\n"
         "sys.stdout.flush()\n"
-        "subprocess.Popen(['sleep', '10']%s)\n"
+        # A Python sleep, not `sleep`: there is no `sleep` on Windows, and the
+        # Popen failing there made the stand-in exit 1 instead of 0.
+        "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(10)']%s)\n"
         "sys.exit(0)\n" % (str(FIXTURE), _result_line(), stderr))
 
 

@@ -161,7 +161,10 @@ def _never_touch_the_real_projects_folder(monkeypatch, tmp_path):
 _DEVELOPER_PREFERENCES = ("JARVIS_STT_BACKEND", "JARVIS_STT_MODEL",
                           "JARVIS_TTS_BACKEND", "JARVIS_TTS_VOICE",
                           "JARVIS_PIPER_VOICE", "JARVIS_PIPER_BIN",
-                          "HONORIFIC", "USER_NAME", "JARVIS_WAKE_WORD", "JARVIS_WAKE_FOLLOW_UP", "JARVIS_QUIET_ORIGINS", "JARVIS_STT_DEVICE")
+                          "HONORIFIC", "USER_NAME", "JARVIS_WAKE_WORD",
+                          "JARVIS_WAKE_FOLLOW_UP", "JARVIS_QUIET_ORIGINS",
+                          "JARVIS_STT_DEVICE", "JARVIS_SCREEN_CAPTURE",
+                          "JARVIS_TOOL_ACK")
 
 
 @pytest.fixture(autouse=True)

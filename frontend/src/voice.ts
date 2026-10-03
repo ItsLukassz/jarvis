@@ -96,21 +96,29 @@ declare const webkitSpeechRecognition: any;
 export function createMicMonitor(
   onLevel: (level: number) => void,
   onEvent: (event: string) => void
-): { sawSpeech(): void } {
+): { sawSpeech(): void; pause(): void; resume(): void } {
   let lastLoudAt = 0;
   let lastResultAt = Date.now();
   let complainedAt = 0;
+  // Held so the mute button can really let go of the microphone: while any
+  // stream is open Windows shows the mic as in use, muted or not.
+  let stream: MediaStream | null = null;
+  let ctx: AudioContext | null = null;
+  let timer: ReturnType<typeof setInterval> | null = null;
+  let paused = false;
 
-  navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
-    const ctx = new AudioContext();
-    const source = ctx.createMediaStreamSource(stream);
+  const open = () => navigator.mediaDevices.getUserMedia({ audio: true }).then((s) => {
+    if (paused) { s.getTracks().forEach((t) => t.stop()); return; }   // muted while opening
+    stream = s;
+    ctx = new AudioContext();
+    const source = ctx.createMediaStreamSource(s);
     const analyser = ctx.createAnalyser();
     analyser.fftSize = 512;
     source.connect(analyser);
     const buf = new Uint8Array(analyser.fftSize);
     onEvent("mic monitor attached");
 
-    setInterval(() => {
+    timer = setInterval(() => {
       analyser.getByteTimeDomainData(buf);
       let sum = 0;
       for (let i = 0; i < buf.length; i++) {
@@ -136,9 +144,24 @@ export function createMicMonitor(
   }).catch((e) => {
     onEvent(`mic monitor could not open the microphone: ${e && e.name}`);
   });
+  open();
 
   return {
     sawSpeech() { lastResultAt = Date.now(); },
+    pause() {
+      paused = true;
+      if (timer) clearInterval(timer);
+      stream?.getTracks().forEach((t) => t.stop());
+      ctx?.close();
+      timer = null; stream = null; ctx = null;
+      onLevel(0);
+    },
+    resume() {
+      if (!paused) return;
+      paused = false;
+      lastResultAt = Date.now();          // a fresh start, not a "deaf" report
+      open();
+    },
   };
 }
 
@@ -512,6 +535,8 @@ export interface AudioPlayer {
   stop(): void;
   dropQueued(): void;
   getAnalyser(): AnalyserNode;
+  /** 0 (silent) to 1 (full). */
+  setVolume(v: number): void;
   onPlayed(cb: (utt: number, idx: number) => void): void;
   onFinished(cb: () => void): void;
 }
@@ -528,7 +553,11 @@ export function createAudioPlayer(): AudioPlayer {
   const analyser = audioCtx.createAnalyser();
   analyser.fftSize = 256;
   analyser.smoothingTimeConstant = 0.8;
-  analyser.connect(audioCtx.destination);
+  // Volume sits AFTER the analyser, so the orb still moves at full strength
+  // however quiet he is.
+  const gain = audioCtx.createGain();
+  analyser.connect(gain);
+  gain.connect(audioCtx.destination);
 
   const queue: QueuedChunk[] = [];
   let isPlaying = false;
@@ -633,6 +662,10 @@ export function createAudioPlayer(): AudioPlayer {
 
     getAnalyser() {
       return analyser;
+    },
+
+    setVolume(v: number) {
+      gain.gain.value = Math.max(0, Math.min(1, v));
     },
 
     onPlayed(cb) {

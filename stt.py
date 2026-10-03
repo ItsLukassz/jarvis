@@ -268,6 +268,14 @@ def _loaded_model_locked(name: str):
     return runner
 
 
+def unload() -> None:
+    """Drop the loaded model (and its GPU memory). `warm()` brings it back."""
+    import gc                                                  # noqa: PLC0415
+    with _MODEL_LOCK:
+        _MODEL_CACHE.clear()
+    gc.collect()
+
+
 def warm() -> None:
     """Load the whisper model in the background at startup, so the first
     sentence does not wait for it (medium.en takes several seconds to load).

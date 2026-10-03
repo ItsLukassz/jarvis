@@ -109,6 +109,9 @@ def gh(monkeypatch):
 
     fake = _Gh()
     monkeypatch.setattr(gh_lookup, "_run_gh", fake.run)
+    # `gh` is faked, so "is gh installed?" must be too: without this every
+    # test here answered `no_gh` on a machine that has no GitHub CLI.
+    monkeypatch.setattr(gh_lookup, "gh_path", lambda: "gh")
     # The login is looked up once and cached; never let a test hit the real one.
     fake.when(lambda a: a[:2] == ["api", "user"], out="tonystark\n")
     return gh_lookup, fake

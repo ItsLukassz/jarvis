@@ -75,6 +75,7 @@ import jarvis_memory
 import jarvis_platform
 import stt
 import tts
+import safety_guard
 from brain import Brain, BrainConfig, MAX_BOOT_PROJECTS
 from speech import Priority, SpeechScheduler
 
@@ -730,6 +731,9 @@ async def _final_transcript(raw: str) -> None:
     text = apply_speech_corrections(raw.strip())
     if not text:
         return
+    if _muted:
+        log.info(f"User (muted, ignored): {text}")
+        return
     if not _passes_wake_word(text):
         log.info(f"User (no wake word, ignored): {text}")
         return
@@ -850,8 +854,26 @@ def _passes_wake_word(text: str) -> bool:
 # the last few seconds as an `audio_peek`; if that ends with the phrase, the
 # page is told to close the utterance now. The phrase is then cut from the
 # command before the brain sees it.
+_muted = False          # the page's mute button (see the "mute" frame)
+_paused = False         # the page's pause button (see the "pause" frame)
+
+
+def _set_paused(paused: bool) -> None:
+    global _paused
+    if paused == _paused:
+        return
+    _paused = paused
+    log.info("JARVIS %s by the user", "paused" if paused else "resumed")
+    if paused:
+        stt.unload()
+        if brain_instance is not None:
+            _spawn(brain_instance.stop())
+    else:
+        stt.warm()
+        if brain_instance is not None:
+            _spawn(brain_instance.start())
 _STOP_PHRASE_RE = re.compile(
-    r"[\s,.!-]*\b(?:that'?s|thats|that is)\s+it[\s,.!-]+(\w+)[\s,.!?-]*$", re.IGNORECASE)
+    r"[\s,.!-]*\b(?:that'?s|thats|that is)\s+it[\s,.!-]+(\w+)[\s,.!?-]*\Z", re.IGNORECASE)
 _peek_busy = False
 
 
@@ -2588,6 +2610,12 @@ class ToolImage:
         self.mime = mime
 
 
+# The tools whose arguments become work or commands; checked by safety_guard
+# before they run (see /internal/tool).
+_GUARDED_TOOLS = frozenset({"spawn_run", "start_build", "steer_session",
+                            "run_command", "create_project"})
+
+
 def _tool_reply(ok: bool, text: str, image: dict | None = None) -> dict:
     """The single funnel every /internal/tool return goes through, so the
     1,500-character cap — the brain's context budget — cannot be skipped by
@@ -2891,6 +2919,19 @@ async def internal_tool(request: Request):
     handler = TOOL_HANDLERS.get(tool)
     if handler is None:
         return _tool_reply(False, f"Unknown tool: {tool}")
+
+    # Nothing that starts or steers work, or runs a command, may ask for
+    # something catastrophic -- "delete system32", "format the C drive".
+    # Refused here, before any run exists; safety_guard's hook is the second
+    # wall, inside the run itself.
+    if tool in _GUARDED_TOOLS:
+        wording = " ".join(str(v) for v in args.values() if isinstance(v, str))
+        why = safety_guard.destructive_reason(wording)
+        if why:
+            log.warning("safety guard refused %s (%s): %r", tool, why, wording[:120])
+            return _tool_reply(True, f"Refused: that would mean {why}, and I won't do "
+                                     f"that under any circumstances, sir. Say so plainly "
+                                     f"to the user and do not try another way.")
 
     # A tool this platform cannot do is not offered to the brain at all —
     # `granted_tools` drops it from `--tools` and `jarvis_mcp` drops it from
@@ -6963,6 +7004,9 @@ async def voice_handler(ws: WebSocket):
     await ws.accept()
     queue = _add_voice_client(ws)
     log.info("Voice WebSocket connected")
+    global _muted
+    _muted = False          # a freshly loaded page starts unmuted and unpaused
+    _set_paused(False)
     try:
         # Through this client's own queue, not straight down the socket, so
         # the opening frames cannot be overtaken by a broadcast that lands
@@ -6993,6 +7037,20 @@ async def voice_handler(ws: WebSocket):
                 # back rather than guessed at. Text only, length-capped, and
                 # it drives nothing.
                 log.info("mic: %s", str(msg.get("text", ""))[:120])
+                continue
+            if kind == "mute":
+                # The page's mute button. While muted, nothing heard is
+                # acted on -- including a sentence already being transcribed
+                # when the button was pressed.
+                _muted = bool(msg.get("muted"))
+                log.info("mic %s by the user", "muted" if _muted else "unmuted")
+                continue
+            if kind == "pause":
+                # The page's pause button: give the machine back. The whisper
+                # model leaves the GPU and the brain process stops; both come
+                # back on resume (a few seconds). The brain returns as a
+                # fresh generation, carrying its journal handover.
+                _set_paused(bool(msg.get("paused")))
                 continue
             if kind == "hush":
                 # The user pressed the key, or the button. Deliberately NOT a
@@ -7371,14 +7429,20 @@ from starlette.responses import FileResponse
 
 FRONTEND_DIST = Path(__file__).parent / "frontend" / "dist"
 
+# The two HTML pages name the hashed bundles of the CURRENT build, so they
+# must never be cached: Electron kept a stale index.html across restarts and
+# went on loading the previous build's JavaScript after a rebuild. The
+# hashed /assets files can be cached safely -- a new build has new names.
+_NO_CACHE = {"Cache-Control": "no-cache, no-store, must-revalidate"}
+
 if FRONTEND_DIST.exists():
     @app.get("/")
     async def serve_index():
-        return FileResponse(str(FRONTEND_DIST / "index.html"))
+        return FileResponse(str(FRONTEND_DIST / "index.html"), headers=_NO_CACHE)
 
     @app.get("/dashboard")
     async def serve_dashboard():
-        return FileResponse(str(FRONTEND_DIST / "dashboard.html"))
+        return FileResponse(str(FRONTEND_DIST / "dashboard.html"), headers=_NO_CACHE)
 
     app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST / "assets")), name="assets")
 

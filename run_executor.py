@@ -28,6 +28,19 @@ log = logging.getLogger("jarvis.run_executor")
 _SKIP_PERMISSIONS = os.getenv("JARVIS_SKIP_PERMISSIONS", "true").lower() \
     not in ("0", "false", "no")
 
+
+def _safety_settings() -> str:
+    """--settings JSON wiring safety_guard.py in as a PreToolUse hook."""
+    import json
+    import sys
+    from pathlib import Path
+    guard = Path(__file__).resolve().parent / "safety_guard.py"
+    command = f'"{sys.executable}" "{guard}"'
+    return json.dumps({"hooks": {"PreToolUse": [{
+        "matcher": "Bash|PowerShell|Write|Edit|MultiEdit|NotebookEdit",
+        "hooks": [{"type": "command", "command": command, "timeout": 10}],
+    }]}})
+
 # Same precedent as brain.py's BrainConfig.from_env: never rely on the CLI's
 # own default, always pass --model explicitly.
 _DEFAULT_MODEL = "sonnet"
@@ -455,6 +468,10 @@ class RunExecutor:
             # Matches the five existing call sites. Without this a run blocks on
             # a permission prompt it has no TTY to answer, and hangs forever.
             cmd.append("--dangerously-skip-permissions")
+        # The floor under an unattended run: a PreToolUse hook that refuses
+        # catastrophic commands (deleting System32, formatting a drive...).
+        # Hooks run in every permission mode, including the one above.
+        cmd += ["--settings", _safety_settings()]
         return cmd
 
     async def _publish_run_updated(self, run_id: str) -> None:

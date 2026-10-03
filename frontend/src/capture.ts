@@ -45,7 +45,8 @@
  */
 export interface Capture {
   start(): void;
-  stop(): void;
+  /** `discard`: drop a half-heard utterance instead of sending it (mute). */
+  stop(discard?: boolean): void;
   /** Close the current utterance now -- the server heard "that's it, Jarvis". */
   endNow(): void;
   readonly running: boolean;
@@ -265,9 +266,13 @@ export function createCapture(
         flush();
       }
     },
-    stop() {
+    stop(discard = false) {
       running = false;
-      if (speaking) flush();
+      // Muting throws away a half-heard sentence; any other stop sends it.
+      if (speaking) {
+        if (discard) reset();
+        else flush();
+      }
       node?.disconnect();
       stream?.getTracks().forEach((t) => t.stop());
       ctx?.close();

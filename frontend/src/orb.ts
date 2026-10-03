@@ -17,6 +17,7 @@ export type OrbState = "idle" | "listening" | "thinking" | "speaking" | "compact
 
 export interface Orb {
   setState(s: OrbState): void;
+  setPaused(p: boolean): void;
   setAnalyser(a: AnalyserNode | null): void;
   destroy(): void;
 }
@@ -124,8 +125,10 @@ export function createOrb(canvas: HTMLCanvasElement): Orb {
 
   const clock = new THREE.Clock();
 
+  let paused = false;        // muted: stop redrawing 60 times a second
+
   function animate() {
-    if (destroyed) return;
+    if (destroyed || paused) return;
     requestAnimationFrame(animate);
     const t = clock.getElapsedTime();
 
@@ -336,6 +339,11 @@ export function createOrb(canvas: HTMLCanvasElement): Orb {
 
   return {
     setState(s: OrbState) { state = s; },
+    setPaused(p: boolean) {
+      const was = paused;
+      paused = p;
+      if (was && !p) animate();
+    },
     setAnalyser(a: AnalyserNode | null) {
       analyser = a;
       if (a) freqData = new Uint8Array(a.frequencyBinCount);

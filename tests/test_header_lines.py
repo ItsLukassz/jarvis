@@ -424,6 +424,12 @@ EXEMPT = {
         "whole listing goes through `_wrap_untrusted(_WINDOWS_WRAP_NAME, …)` "
         "— the wrapper's name a literal, for the reason test_page_tools "
         "pins. Covered by tests/test_screen_tools.py"),
+    "server.tool_look_at_window": (
+        "`shot.app` and `shot.title` are one WINDOW's process name and title "
+        "off the user's own desk, and both go through "
+        "`_wrap_untrusted(_WINDOWS_WRAP_NAME, …)` before they join the "
+        "sentence attached to the picture; window_capture's own refusals "
+        "name no app or title at all."),
 
     # --- the sanitisers themselves ---------------------------------------
     "server._said_name": (
