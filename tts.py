@@ -218,6 +218,15 @@ def _apply_honorific(text: str) -> str:
     return re.sub(r"\b[Ss]ir\b", pick, text)
 
 
+# What each recent line became once the honorific was applied, so the page can
+# show the words he actually said rather than the "sir" they were written with.
+_spoken: dict[str, str] = {}
+
+
+def spoken_form(text: str) -> str:
+    return _spoken.get(text) or _apply_honorific(text)
+
+
 def resolve_piper_voice(voice: Optional[str] = None) -> str:
     return (voice or os.getenv("JARVIS_PIPER_VOICE") or DEFAULT_PIPER_VOICE).strip()
 
@@ -327,9 +336,13 @@ async def synthesize_chunk(text: str, *, api_key: str = "", voice_id: str = "",
     a configured backend that fails hands over to `say` (see below), so it
     means macOS itself would not speak either.
     """
+    written = text
     text = _apply_honorific(speakable(text).strip())
     if not text:
         return None
+    if len(_spoken) > 64:
+        _spoken.clear()
+    _spoken[written] = text
     chosen = resolve_backend(backend)
 
     if chosen == BACKEND_SAY:

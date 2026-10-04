@@ -590,6 +590,12 @@ async def _voice_emit(msg: dict) -> None:
     for an ack that can never come. Status frames with nobody listening are
     simply lost.
     """
+    if msg.get("type") == "audio" and msg.get("text"):
+        # For the page's Comms panel: the line as spoken, when the honorific
+        # changed it. Otherwise the frame goes out exactly as it came in.
+        shown = tts.spoken_form(msg["text"])
+        if shown != msg["text"]:
+            msg = {**msg, "shown": shown}
     delivered = 0
     for ws in list(voice_clients):
         queue = _voice_queues.get(ws)
@@ -761,6 +767,7 @@ async def _final_transcript(raw: str) -> None:
         log.info(f"User ({verdict}, ignored, {ago}): {text}")
         return
     log.info(f"User: {text}")
+    await _voice_emit({"type": "heard", "text": text})      # the page's Comms panel
     if _is_fresh_start(text):
         _spawn(_start_fresh())
         return
@@ -7594,6 +7601,16 @@ async def api_test_fish(body: KeyTest):
                 return {"valid": False, "error": f"HTTP {resp.status_code}"}
     except Exception as e:
         return {"valid": False, "error": str(e)[:200]}
+
+@app.get("/api/pc/stats")
+async def api_pc_stats():
+    """CPU, memory and graphics card load for the page's Systems panel."""
+    try:
+        import pc_control
+        return await asyncio.to_thread(pc_control.stats)
+    except ImportError:              # psutil is a Windows-only requirement
+        return {}
+
 
 @app.get("/api/settings/status")
 async def api_settings_status():

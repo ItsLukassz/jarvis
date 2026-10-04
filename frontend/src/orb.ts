@@ -22,18 +22,19 @@ export interface Orb {
   destroy(): void;
 }
 
-export function createOrb(canvas: HTMLCanvasElement): Orb {
+export function createOrb(canvas: HTMLCanvasElement, zoom = 1): Orb {
   let destroyed = false;
   const N = 2000;
 
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  // Transparent: the page's own background (grid, glow) shows through.
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
   renderer.setPixelRatio(window.devicePixelRatio);
   renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.setClearColor(0x050508, 1);
+  renderer.setClearColor(0x000000, 0);
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 1, 1000);
-  camera.position.z = 80;
+  camera.position.z = 104 / zoom;
 
   // ── Particles ──
   const geo = new THREE.BufferGeometry();
@@ -100,6 +101,112 @@ export function createOrb(canvas: HTMLCanvasElement): Orb {
 
   // Store active connections for electron spawning
   let activeConnections: { x1: number; y1: number; z1: number; x2: number; y2: number; z2: number }[] = [];
+
+  // ── HUD — arcs, a dial and a voice ring around the cloud, facing the camera ──
+  const hud = new THREE.Group();
+  scene.add(hud);
+  const hudMat = new THREE.LineBasicMaterial({
+    color: 0x4ca8e8, transparent: true, opacity: 0.3,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  });
+
+  // Unit-radius arcs; each span is [start, length] in turns.
+  function arcs(spans: [number, number][], radius = 1): THREE.LineSegments {
+    const v: number[] = [];
+    for (const [start, len] of spans) {
+      const steps = Math.max(2, Math.round(len * 160));
+      for (let i = 0; i < steps; i++) {
+        for (const k of [i, i + 1]) {
+          const ang = (start + (len * k) / steps) * Math.PI * 2;
+          v.push(Math.cos(ang) * radius, Math.sin(ang) * radius, 0);
+        }
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(v, 3));
+    const l = new THREE.LineSegments(g, hudMat);
+    hud.add(l);
+    return l;
+  }
+
+  const ringA = arcs([[0, 0.22], [0.33, 0.22], [0.66, 0.22]], 1.14);
+  const ringB = arcs([[0.05, 0.38], [0.55, 0.38]], 1.24);
+  const ringC = arcs([[0, 0.08], [0.25, 0.08], [0.5, 0.08], [0.75, 0.08]], 1.27);
+
+  // Dial: 72 ticks, every sixth one longer.
+  const tickV: number[] = [];
+  for (let i = 0; i < 72; i++) {
+    const ang = (i / 72) * Math.PI * 2, c = Math.cos(ang), s = Math.sin(ang);
+    const outer = i % 6 === 0 ? 1.4 : 1.36;
+    tickV.push(c * 1.33, s * 1.33, 0, c * outer, s * outer, 0);
+  }
+  const tickGeo = new THREE.BufferGeometry();
+  tickGeo.setAttribute("position", new THREE.Float32BufferAttribute(tickV, 3));
+  const ticks = new THREE.LineSegments(tickGeo, hudMat);
+  hud.add(ticks);
+
+  // Voice ring: his own speech, drawn as a circular spectrum.
+  const WAVE_N = 128;
+  const wave = new Float32Array(WAVE_N);
+  const wavePos = new Float32Array(WAVE_N * 3);
+  const waveGeo = new THREE.BufferGeometry();
+  waveGeo.setAttribute("position", new THREE.BufferAttribute(wavePos, 3));
+  const waveMat = hudMat.clone();
+  hud.add(new THREE.LineLoop(waveGeo, waveMat));
+
+  // Gyroscope: three full rings tumbling in 3D, each carrying one bright satellite.
+  const satMat = new THREE.PointsMaterial({
+    color: 0xffffff, size: 0.9, transparent: true, opacity: 0.95,
+    sizeAttenuation: true, blending: THREE.AdditiveBlending, depthWrite: false,
+  });
+  const gyros = [1.46, 1.54, 1.62].map((r) => {
+    const ring = arcs([[0, 1]], r);
+    const satGeo = new THREE.BufferGeometry();
+    satGeo.setAttribute("position", new THREE.Float32BufferAttribute([r, 0, 0], 3));
+    ring.add(new THREE.Points(satGeo, satMat));
+    const pivot = new THREE.Group();
+    pivot.add(ring);
+    hud.add(pivot);
+    return { pivot, ring, angle: Math.random() * 6 };
+  });
+
+  // Radial spectrum: bars standing out from the dial, driven by his voice.
+  const BAR_N = 96;
+  const barLevel = new Float32Array(BAR_N);
+  const barPos = new Float32Array(BAR_N * 6);
+  const barGeo = new THREE.BufferGeometry();
+  barGeo.setAttribute("position", new THREE.BufferAttribute(barPos, 3));
+  hud.add(new THREE.LineSegments(barGeo, waveMat));
+
+  // Core glow
+  const glowCanvas = document.createElement("canvas");
+  glowCanvas.width = glowCanvas.height = 128;
+  const gctx = glowCanvas.getContext("2d")!;
+  const grad = gctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+  grad.addColorStop(0, "rgba(255,255,255,1)");
+  grad.addColorStop(0.35, "rgba(255,255,255,0.25)");
+  grad.addColorStop(1, "rgba(255,255,255,0)");
+  gctx.fillStyle = grad;
+  gctx.fillRect(0, 0, 128, 128);
+  const glowMat = new THREE.SpriteMaterial({
+    map: new THREE.CanvasTexture(glowCanvas), transparent: true, opacity: 0.15,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  });
+  const glow = new THREE.Sprite(glowMat);
+  scene.add(glow);
+
+  // One colour per state, so a glance says what he is doing.
+  const PALETTE: Record<OrbState, THREE.Color> = {
+    idle: new THREE.Color(0x3d8bff),
+    listening: new THREE.Color(0x22e3ff),
+    thinking: new THREE.Color(0xa07bff),
+    speaking: new THREE.Color(0xffb347),
+    compacting: new THREE.Color(0x3a5f8a),
+  };
+  const HUD_OPACITY: Record<OrbState, number> = {
+    idle: 0.22, listening: 0.4, thinking: 0.55, speaking: 0.55, compacting: 0.08,
+  };
+  let hudRadius = 22;
 
   // ── State ──
   let state: OrbState = "idle";
@@ -209,7 +316,10 @@ export function createOrb(canvas: HTMLCanvasElement): Orb {
       vel[i3 + 2] += Math.sin(t * 0.022 + px * 0.9 + x * 0.1) * 0.0008 * currentSpeed;
 
       const dist = Math.sqrt(x * x + y * y + z * z) || 0.01;
-      const pull = Math.max(0, dist - currentRadius) * 0.002 + 0.0003;
+      // The steady inward pull stops short of the centre: applied all the way in,
+      // it beat the drift whenever he sat idle (muted) and the whole cloud
+      // collapsed into one bright knot.
+      const pull = Math.max(0, dist - currentRadius) * 0.002 + (dist > currentRadius * 0.75 ? 0.0003 : 0);
       vel[i3] -= (x / dist) * pull;
       vel[i3 + 1] -= (y / dist) * pull;
       vel[i3 + 2] -= (z / dist) * pull;
@@ -316,10 +426,56 @@ export function createOrb(canvas: HTMLCanvasElement): Orb {
     mat.opacity = currentBright + bass * 0.08;
     mat.size = currentSize + bass * 0.05;
 
-    if (state === "thinking") { mat.color.lerp(new THREE.Color(0x6ec4ff), 0.015); lineMat.color.lerp(new THREE.Color(0x6ec4ff), 0.015); }
-    else if (state === "speaking") { mat.color.lerp(new THREE.Color(0x5ab8f0), 0.015); lineMat.color.lerp(new THREE.Color(0x5ab8f0), 0.015); }
-    else if (state === "compacting") { mat.color.lerp(new THREE.Color(0x3a5f8a), 0.03); lineMat.color.lerp(new THREE.Color(0x3a5f8a), 0.03); }   // desaturated, cooler
-    else { mat.color.lerp(new THREE.Color(0x4ca8e8), 0.015); lineMat.color.lerp(new THREE.Color(0x4ca8e8), 0.015); }
+    mat.color.lerp(PALETTE[state], 0.04);
+    lineMat.color.copy(mat.color);
+    hudMat.color.copy(mat.color);
+    waveMat.color.copy(mat.color);
+    glowMat.color.copy(mat.color);
+
+    // ── HUD ──
+    hudRadius += (currentRadius * 0.74 - hudRadius) * 0.03;
+    hud.scale.setScalar(hudRadius * (1 + bass * 0.06));
+    hud.position.z = cloudZ * 0.3;
+    const spin = currentSpeed / 0.2 + transitionEnergy * 4;
+    ringA.rotation.z += 0.004 * spin;
+    ringB.rotation.z -= 0.0025 * spin;
+    ringC.rotation.z += 0.007 * spin;
+    ticks.rotation.z -= 0.0006 * spin;
+    hudMat.opacity += (HUD_OPACITY[state] - hudMat.opacity) * 0.04;
+    waveMat.opacity = Math.min(1, hudMat.opacity * 1.6 + mid * 0.5);
+
+    const bins = Math.min(freqData.length, 48);
+    for (let i = 0; i < WAVE_N; i++) {
+      const k = i < WAVE_N / 2 ? i : WAVE_N - 1 - i;          // mirrored: left matches right
+      const ang = (i / WAVE_N) * Math.PI * 2 + Math.PI / 2;
+      const level = analyser ? freqData[Math.floor((k / (WAVE_N / 2)) * bins)] / 255 : 0;
+      const target = level * 0.3 + Math.sin(ang * 6 + t * 1.5) * 0.008;
+      wave[i] += (target - wave[i]) * 0.35;
+      const r = 1.04 + wave[i];
+      wavePos[i * 3] = Math.cos(ang) * r;
+      wavePos[i * 3 + 1] = Math.sin(ang) * r;
+    }
+    waveGeo.attributes.position.needsUpdate = true;
+
+    gyros.forEach((g, i) => {
+      g.angle += 0.0035 * (i + 1) * spin;
+      g.pivot.rotation.set(1.0 + Math.sin(t * 0.13 + i * 2.1) * 0.45, g.angle, i * 1.1);
+      g.ring.rotation.z += 0.012 * (i % 2 ? -1 : 1);
+    });
+
+    for (let i = 0; i < BAR_N; i++) {
+      const k = i < BAR_N / 2 ? i : BAR_N - 1 - i;
+      const ang = (i / BAR_N) * Math.PI * 2 + Math.PI / 2;
+      const level = analyser ? freqData[Math.floor((k / (BAR_N / 2)) * bins)] / 255 : 0;
+      barLevel[i] += (level - barLevel[i]) * 0.3;
+      const c = Math.cos(ang), s = Math.sin(ang), r0 = 1.42, r1 = r0 + 0.015 + barLevel[i] * 0.5;
+      barPos.set([c * r0, s * r0, 0, c * r1, s * r1, 0], i * 6);
+    }
+    barGeo.attributes.position.needsUpdate = true;
+
+    glow.position.z = cloudZ;
+    glow.scale.setScalar(currentRadius * 2.6 * (1 + bass * 0.5));
+    glowMat.opacity = 0.1 + currentBright * 0.12 + bass * 0.3;
 
     camera.position.x = Math.sin(t * 0.02) * 5;
     camera.position.y = Math.cos(t * 0.03) * 3;

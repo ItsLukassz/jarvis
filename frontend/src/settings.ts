@@ -196,6 +196,30 @@ function buildPanelHTML(): string {
           </div>
         </section>
 
+        <!-- The orb that appears over other apps. Kept in this browser's own
+             storage and applied as it is changed: the overlay window reads it
+             and shows itself for a moment so the choice can be seen. -->
+        <section class="settings-section" id="section-overlay">
+          <h3>Overlay Orb</h3>
+
+          <div class="settings-field">
+            <label>Where it appears</label>
+            <div class="overlay-grid" id="overlay-pos">
+              ${["top", "middle", "bottom"].flatMap((v) => ["left", "center", "right"].map((h) =>
+                `<button type="button" data-pos="${v}-${h}" title="${v} ${h}" aria-label="${v} ${h}"></button>`)).join("")}
+            </div>
+          </div>
+
+          <div class="settings-field">
+            <label>Size <span id="overlay-size-value"></span></label>
+            <input type="range" id="overlay-size" min="280" max="720" step="20" />
+            <p class="settings-hint">
+              It appears while JARVIS is hearing a request, thinking or
+              speaking, and only when this window is not in front.
+            </p>
+          </div>
+        </section>
+
         <!-- System Info -->
         <section class="settings-section" id="section-sysinfo">
           <h3>System Info</h3>
@@ -309,7 +333,38 @@ async function loadPreferences() {
   }
 }
 
+// Overlay orb: position and size, shared with overlay.ts through localStorage.
+function wireOverlaySettings() {
+  const grid = document.getElementById("overlay-pos");
+  const size = document.getElementById("overlay-size") as HTMLInputElement | null;
+  const sizeValue = document.getElementById("overlay-size-value");
+  if (!grid || !size || !sizeValue) return;
+  let saved: { pos?: string; size?: number } = {};
+  try { saved = JSON.parse(localStorage.getItem("jarvis-overlay") ?? "{}"); } catch { /* defaults */ }
+  const cfg = { pos: saved.pos ?? "bottom-center", size: saved.size ?? 440 };
+  const channel = new BroadcastChannel("jarvis-overlay");
+
+  const render = () => {
+    grid.querySelectorAll("button").forEach((b) =>
+      b.classList.toggle("active", b.dataset.pos === cfg.pos));
+    size.value = String(cfg.size);
+    sizeValue.textContent = `${cfg.size} px`;
+  };
+  const save = () => {
+    localStorage.setItem("jarvis-overlay", JSON.stringify(cfg));
+    channel.postMessage({ type: "config" });      // the overlay shows itself in the new place
+    render();
+  };
+  grid.addEventListener("click", (e) => {
+    const pos = (e.target as HTMLElement).dataset.pos;
+    if (pos) { cfg.pos = pos; save(); }
+  });
+  size.addEventListener("input", () => { cfg.size = Number(size.value); save(); });
+  render();
+}
+
 function wireEvents() {
+  wireOverlaySettings();
   // Close
   document.getElementById("settings-close")?.addEventListener("click", closeSettings);
   document.getElementById("settings-backdrop")?.addEventListener("click", closeSettings);
@@ -611,7 +666,9 @@ export function isSettingsOpen(): boolean {
 export async function checkFirstTimeSetup(): Promise<boolean> {
   try {
     const status = await apiGet<StatusResponse>("/api/settings/status");
-    if (!status.env_keys_set.fish_audio) {
+    // Only a voice that needs a key is a reason to open Settings unasked: with
+    // a local voice (piper, say) a missing Fish key is not a missing anything.
+    if (status.tts_backend === "fish" && !status.env_keys_set.fish_audio) {
       openSettings();
       return true;
     }

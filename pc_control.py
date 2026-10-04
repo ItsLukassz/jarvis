@@ -204,6 +204,24 @@ def clipboard_write(text: str) -> None:
 
 # ── status ──────────────────────────────────────────────────────────────────
 
+def stats() -> dict:
+    """The numbers behind the page's Systems panel. Percentages, 0-100."""
+    import psutil
+    mem = psutil.virtual_memory()
+    out = {"cpu": psutil.cpu_percent(interval=None), "ram": mem.percent,
+           "ram_gb": round(mem.used / 2**30, 1), "gpu": None, "vram": None, "gpu_temp": None}
+    try:
+        gpu = subprocess.run(
+            ["nvidia-smi", "--query-gpu=temperature.gpu,utilization.gpu,memory.used,memory.total",
+             "--format=csv,noheader,nounits"], capture_output=True, text=True, timeout=5,
+            creationflags=_NO_WINDOW).stdout.strip().splitlines()[0]
+        temp, util, used, total = [float(x) for x in gpu.split(",")]
+        out.update(gpu=util, vram=round(100 * used / total), gpu_temp=temp)
+    except (OSError, subprocess.SubprocessError, ValueError, IndexError, ZeroDivisionError):
+        pass
+    return out
+
+
 def status() -> str:
     """CPU, memory, the biggest memory users, and the graphics card."""
     import psutil

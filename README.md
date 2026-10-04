@@ -12,19 +12,32 @@ a human he tells you which one, out loud, without you having to look.
 
 > "Will do, sir."
 
-![Six seconds of the JARVIS orb while he is speaking, looping. Two thousand
-particles hold the shape of a hollow blue sphere, wired together by faint lines
-between the ones that drift close enough; a bright rim catches its lower edge.
-Through each spoken phrase the sphere swells and brightens and leans towards
-you, then falls back and contracts through the pause before the next one, three
-times over, while the camera drifts a few degrees around
-it.](docs/images/orb-speaking.gif)
+![The JARVIS window while he is speaking. A frameless, see-through dark panel
+with a glowing amber edge. In the centre a hollow globe of particles wired
+together by faint lines, ringed by arcs, a tick dial and a radial spectrum of
+bars standing out with his voice. On the left a Systems panel with segmented
+bars for CPU, memory, graphics and video memory; on the right a Comms panel
+logging what was said to him and his reply; underneath, the word SPEAKING in
+wide letters and a Stop button. Volume, mute, pause, menu and close sit in a
+glass dock at the top right.](docs/images/ui-main.png)
 
-*What you actually look at while you talk to him: `frontend/src/orb.ts`,
-rendered live. The audio driving the pulse is synthetic — a speech-shaped
-envelope fitted to a measurement of the real analyser, not a recording of his
-voice — but every pixel is that file running. Regenerate with
-`scripts/make_orb_loop.py`.*
+*The window you talk to: `frontend/src/orb.ts` and `frontend/src/style.css`,
+rendered live. Everything takes its colour from what he is doing — blue idle,
+cyan listening, violet thinking, amber speaking, grey paused — and the orb
+holds still whenever the window is not in front, so it costs nothing while you
+work.*
+
+<img src="docs/images/ui-overlay.png" width="280" align="right"
+     alt="The overlay: the same amber globe on its own, with a SPEAKING pill and a caption of what he is saying underneath.">
+
+**The overlay.** When you talk to him from another app, the orb appears on its
+own over whatever is on screen — transparent, click-through and never focused,
+so it takes no keystroke from the game or document underneath — with a caption
+of what he heard and what he is saying, then fades away. Where it appears and
+how big it is are yours to set: Settings → Overlay Orb. (Shown here on black;
+on your desktop only the globe and its labels are drawn.)
+
+<br clear="right">
 
 ![A twenty-three second walkthrough of the JARVIS dashboard, looping. It opens
 on Runs: a red "Needs Attention" panel over a failed run and a timed-out one,

@@ -79,3 +79,13 @@ def test_the_hook_blocks_a_write_into_system32():
 def test_the_hook_lets_ordinary_commands_through():
     r = _run_hook({"tool_name": "Bash", "tool_input": {"command": "npm test"}})
     assert r.returncode == 0
+
+
+def test_run_settings_reach_the_cli_as_a_file_not_as_json():
+    # cmd.exe (the claude.cmd shim) reads a `|` in an argument as a pipe.
+    import json
+    import run_executor
+    arg = run_executor._safety_settings()
+    assert "|" not in arg and '"' not in arg
+    with open(arg, encoding="utf-8") as f:
+        assert "Edit" in json.load(f)["hooks"]["PreToolUse"][0]["matcher"]

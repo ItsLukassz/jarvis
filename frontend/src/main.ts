@@ -33,15 +33,46 @@ function showError(msg: string) {
   }, 5000);
 }
 
+const stateWordEl = document.getElementById("state-word")!;
+
+// The overlay window mirrors this page (see overlay.ts).
+const overlayChannel = new BroadcastChannel("jarvis-overlay");
+
+// The big word under the orb. #status-text beneath it is left for notices.
 function updateStatus(state: State) {
   const labels: Record<State, string> = {
-    idle: "",
-    listening: "listening...",
-    thinking: "thinking...",
-    speaking: "",
-    compacting: "",          // the notice banner carries the words; the orb carries the state
+    idle: isPaused ? "paused" : isMuted ? "muted" : "standby",
+    listening: "listening",
+    thinking: "thinking",
+    speaking: "speaking",
+    compacting: "refreshing",
   };
-  statusEl.textContent = labels[state];
+  stateWordEl.textContent = labels[state];
+  statusEl.textContent = "";
+  overlayChannel.postMessage({ type: "state", state, word: labels[state] });
+}
+
+// ── Comms panel: what was heard and what he said ──
+const logEl = document.getElementById("log")!;
+function addLog(who: "you" | "jarvis", text: string) {
+  overlayChannel.postMessage({ type: who === "you" ? "heard" : "said", text });
+  logEl.querySelector(".log-empty")?.remove();
+  const last = logEl.lastElementChild as HTMLElement | null;
+  if (who === "jarvis" && last?.dataset.who === "jarvis") {
+    // His reply arrives a sentence at a time: one entry, not six.
+    last.lastElementChild!.textContent += " " + text;
+    return;
+  }
+  const line = document.createElement("div");
+  line.className = "log-line";
+  line.dataset.who = who;
+  const tag = document.createElement("span");
+  tag.textContent = who === "you" ? "You" : "Jarvis";
+  const body = document.createElement("p");
+  body.textContent = text;
+  line.append(tag, body);
+  logEl.appendChild(line);
+  while (logEl.children.length > 5) logEl.firstElementChild!.remove();
 }
 
 // ---------------------------------------------------------------------------
@@ -73,6 +104,7 @@ let muteMicDuringSpeech = false;
 function transition(newState: State) {
   if (newState === currentState) return;
   currentState = newState;
+  document.body.dataset.state = newState;      // the stylesheet takes its accent from this
   const btn = document.getElementById("hush");
   if (btn) (btn as HTMLButtonElement).hidden = newState !== "speaking";
   orb.setState(newState as OrbState);
@@ -239,7 +271,9 @@ socket.onMessage((msg) => {
       if (currentState !== "speaking") transition("speaking");
       audioPlayer.enqueue(data, Number(msg.utt), Number(msg.idx));
     }
-    if (msg.text) console.log("[JARVIS]", msg.text);
+    if (msg.text) addLog("jarvis", String(msg.shown ?? msg.text));
+  } else if (type === "heard") {
+    addLog("you", String(msg.text));
   } else if (type === "stop") {
     audioPlayer.stop();
     transition(earsOff() ? "idle" : "listening");
@@ -310,6 +344,7 @@ function syncEars() {
   // The server is told too, so anything already on its way -- a sentence
   // being transcribed at the moment of the click -- is dropped, not answered.
   socket.send({ type: "mute", muted: off });
+  updateStatus(currentState);      // standby / muted / paused, even with no state change
   if (off) {
     voiceInput.pause();
     micMonitor.pause();            // let go of the microphone entirely
@@ -343,7 +378,8 @@ btnPause.addEventListener("click", (e) => {
   isPaused = !isPaused;
   btnPause.classList.toggle("muted", isPaused);
   btnPause.title = isPaused ? "Resume JARVIS" : "Pause JARVIS (frees CPU, memory and GPU)";
-  orb.setPaused(isPaused);
+  syncOrb();
+  document.body.classList.toggle("is-paused", isPaused);
   socket.send({ type: "pause", paused: isPaused });
   syncEars();
 });
@@ -377,6 +413,57 @@ btnFixSelf.addEventListener("click", (e) => {
   // Milestone 1 has no tools yet; "Fix yourself" returns as a brain tool later.
   statusEl.textContent = "fix-yourself is not available in this build";
 });
+
+// HUD clock
+const clockEl = document.getElementById("hud-clock")!;
+const tick = () => {
+  clockEl.textContent = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+};
+tick();
+setInterval(tick, 1000);
+
+// His voice for the overlay's orb, while he is speaking.
+const overlayFreq = new Uint8Array(audioPlayer.getAnalyser().frequencyBinCount);
+setInterval(() => {
+  if (currentState !== "speaking") return;
+  audioPlayer.getAnalyser().getByteFrequencyData(overlayFreq);
+  overlayChannel.postMessage({ type: "freq", data: overlayFreq.slice(0, 64) });
+}, 50);
+
+// The window has no frame of its own; closing hides it to the tray.
+document.getElementById("btn-close")!.addEventListener("click", () => window.close());
+
+// Nothing is animated for a window nobody is looking at: behind another app,
+// minimised or in the tray, the orb holds still and costs no GPU. (The overlay
+// is its own window and is unaffected.)
+function syncOrb() {
+  orb.setPaused(isPaused || document.hidden || !document.hasFocus());
+}
+window.addEventListener("focus", syncOrb);
+window.addEventListener("blur", syncOrb);
+document.addEventListener("visibilitychange", syncOrb);
+syncOrb();
+
+// Systems panel
+function gauge(id: string, pct: number | null, label: string) {
+  const el = document.getElementById(id)!;
+  el.querySelector("b")!.textContent = pct === null ? "n/a" : label;
+  el.style.setProperty("--v", `${pct ?? 0}%`);
+  el.classList.toggle("is-high", (pct ?? 0) >= 85);
+}
+async function pollStats() {
+  if (isPaused || document.hidden || !document.hasFocus()) return;
+  try {
+    const s = await (await fetch("/api/pc/stats")).json();
+    if (s.cpu === undefined) return;
+    gauge("g-cpu", s.cpu, `${Math.round(s.cpu)}%`);
+    gauge("g-ram", s.ram, `${s.ram_gb} GB`);
+    gauge("g-gpu", s.gpu, `${Math.round(s.gpu)}% · ${Math.round(s.gpu_temp)}°`);
+    gauge("g-vram", s.vram, `${Math.round(s.vram)}%`);
+  } catch { /* the server is restarting; the next poll will find it */ }
+}
+pollStats();
+setInterval(pollStats, 3000);
 
 // Settings button
 const btnSettings = document.getElementById("btn-settings")!;

@@ -30,16 +30,25 @@ _SKIP_PERMISSIONS = os.getenv("JARVIS_SKIP_PERMISSIONS", "true").lower() \
 
 
 def _safety_settings() -> str:
-    """--settings JSON wiring safety_guard.py in as a PreToolUse hook."""
+    """Path of a --settings file wiring safety_guard.py in as a PreToolUse hook.
+
+    A file, never the JSON itself: when `claude` resolves to the npm shim
+    (claude.cmd) the arguments pass through cmd.exe, which reads the `|` in
+    the matcher as a pipe -- "'Edit' is not recognized as an internal or
+    external command" -- and every run dies before it starts.
+    """
     import json
     import sys
+    import tempfile
     from pathlib import Path
     guard = Path(__file__).resolve().parent / "safety_guard.py"
     command = f'"{sys.executable}" "{guard}"'
-    return json.dumps({"hooks": {"PreToolUse": [{
+    path = Path(tempfile.gettempdir()) / "jarvis-run-safety-settings.json"
+    path.write_text(json.dumps({"hooks": {"PreToolUse": [{
         "matcher": "Bash|PowerShell|Write|Edit|MultiEdit|NotebookEdit",
         "hooks": [{"type": "command", "command": command, "timeout": 10}],
-    }]}})
+    }]}}), encoding="utf-8")
+    return str(path)
 
 # Same precedent as brain.py's BrainConfig.from_env: never rely on the CLI's
 # own default, always pass --model explicitly.
@@ -219,7 +228,8 @@ class RunExecutor:
                  idle_sec: float | None = None,
                  poll_sec: float = _READ_POLL_SEC):
         self._store = store
-        self._claude_path = claude_path or shutil.which("claude") or "claude"
+        self._claude_path = (claude_path or os.getenv("JARVIS_CLAUDE_PATH")
+                             or shutil.which("claude") or "claude")
         self._max_concurrent = max_concurrent
         self._grace_sec = grace_sec
         self._eof_grace_sec = eof_grace_sec

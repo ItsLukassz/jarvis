@@ -1,5 +1,5 @@
 "use strict";
-const { app, BrowserWindow, Menu, Tray, dialog, session, shell, systemPreferences } = require("electron");
+const { app, BrowserWindow, Menu, Tray, dialog, screen, session, shell, systemPreferences } = require("electron");
 const path = require("node:path");
 const { createSupervisor } = require("./server");
 const { sameOrigin, grantsPermission, dashboardUrl } = require("./policy");
@@ -37,6 +37,7 @@ if (!app.requestSingleInstanceLock()) {
   if (process.platform === "win32") app.setAppUserModelId(LOGIN_NAME);
   let win = null;
   let dashboard = null;   // the run monitor's own window, when it is open
+  let overlay = null;     // the orb that appears over other apps while he is engaged
   let tray = null;        // held here so it is never garbage-collected away
   // The one flag that separates "the user closed the window" from "the
   // application is quitting". It is set in before-quit, which every quit
@@ -219,7 +220,12 @@ if (!app.requestSingleInstanceLock()) {
       height: 800,
       title: "JARVIS",
       icon: ICON,
-      backgroundColor: "#111111",
+      // No frame, see-through: the page draws its own edge, drag strip and
+      // close button (frontend/src/style.css). The price on Windows is that
+      // a transparent window cannot be resized or maximised.
+      frame: false,
+      transparent: true,
+      resizable: false,
       // At login, the tray and not a window -- still listening: phase 6's
       // Task 1 measured a never-shown window capturing 99.9%, no gesture.
       show: !STARTED_AT_LOGIN,
@@ -258,6 +264,71 @@ if (!app.requestSingleInstanceLock()) {
     return win;
   }
 
+  // The orb, over whatever is on screen, while he is hearing a request,
+  // thinking or speaking -- and only when the main window is not already in
+  // front. Click-through and never focused: it must not take a keystroke from
+  // the game or document underneath. The page (frontend/src/overlay.ts) only
+  // mirrors the main window, and asks to be shown or hidden through its
+  // title, so the preload stays empty of privilege.
+  // Where and how big: Settings > Overlay Orb, which reaches here in the
+  // overlay page's title. It is a page's say-so, so nothing is taken on
+  // trust: an unknown position means the default, the size is clamped.
+  function placeOverlay(pos, sizeText) {
+    const size = Math.min(720, Math.max(280, Math.round(Number(sizeText)) || 440));
+    const [v, h] = String(pos).split("-");
+    const area = screen.getPrimaryDisplay().workArea;
+    const MARGIN = 24;
+    const along = (start, length, where) =>
+      where === "left" || where === "top" ? start + MARGIN
+        : where === "center" || where === "middle" ? Math.round(start + (length - size) / 2)
+          : start + length - size - MARGIN;
+    overlay.setBounds({
+      x: along(area.x, area.width, h || "center"),
+      y: along(area.y, area.height, v || "bottom"),
+      width: size,
+      height: size,
+    });
+  }
+
+  function createOverlay() {
+    overlay = new BrowserWindow({
+      frame: false,
+      transparent: true,
+      resizable: false,
+      focusable: false,
+      skipTaskbar: true,
+      hasShadow: false,
+      show: false,
+      webPreferences: {
+        preload: path.join(__dirname, "preload.js"),
+        contextIsolation: true,
+        nodeIntegration: false,
+        backgroundThrottling: false,      // hidden is its normal state
+      },
+    });
+    overlay.setIgnoreMouseEvents(true);
+    lockToOrigin(overlay);
+    overlay.webContents.on("page-title-updated", (event, title) => {
+      event.preventDefault();
+      if (!overlay || !title.startsWith("jarvis-overlay:")) return;
+      const [, mode, pos, sizeText] = title.split(":");
+      placeOverlay(pos, sizeText);
+      const inFront = win && win.isVisible() && !win.isMinimized() && win.isFocused();
+      // "preview" is Settings showing the new place: wanted even in front.
+      if (mode === "preview" || (mode === "on" && !inFront)) {
+        overlay.setAlwaysOnTop(true, "screen-saver");
+        overlay.showInactive();
+        log(`overlay: shown (${mode}) at ${JSON.stringify(overlay.getBounds())}`);
+      } else if (overlay.isVisible()) {
+        overlay.hide();
+        log("overlay: hidden");
+      }
+    });
+    overlay.on("closed", () => { overlay = null; });
+    placeOverlay("bottom-center", 440);
+    overlay.loadURL(new URL("/?overlay", ORIGIN).href);
+  }
+
   app.whenReady().then(async () => {
     grantMicrophone();
     await askMacOS();
@@ -271,6 +342,7 @@ if (!app.requestSingleInstanceLock()) {
       return;
     }
     createWindow();
+    createOverlay();
     createTray();
     await warnIfDeaf();
   });
@@ -301,6 +373,7 @@ if (!app.requestSingleInstanceLock()) {
 
   app.on("before-quit", () => {
     reallyQuitting = true;
+    if (overlay) overlay.destroy();
     supervisor.stop();
   });
 }
