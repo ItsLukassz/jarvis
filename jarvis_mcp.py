@@ -495,6 +495,97 @@ TOOL_SPECS = [
                         "required": ["text"]},
     },
     {
+        "name": "find_files",
+        "description": ("Find files in the user's Desktop, Documents, Downloads, Pictures, "
+                        "Videos and Music by words in the NAME, newest first. `folder` narrows "
+                        "it ('Downloads'); `days` keeps only files changed that recently."),
+        "inputSchema": {"type": "object",
+                        "properties": {"query": {"type": "string"},
+                                       "folder": {"type": "string"},
+                                       "days": {"type": "number"}},
+                        "required": ["query"]},
+    },
+    {
+        "name": "open_file",
+        "description": ("Open a document with its default program. `name` is a path, or just "
+                        "words from the file's name -- the newest match is opened, so "
+                        "'the pdf I downloaded' is open_file('pdf'). Never runs programs."),
+        "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}},
+                        "required": ["name"]},
+    },
+    {
+        "name": "append_to_file",
+        "description": ("Add lines to the end of an existing text file. `name` is a path or "
+                        "words from its name: 'add milk to my shopping list' is "
+                        "append_to_file('shopping list', 'milk')."),
+        "inputSchema": {"type": "object",
+                        "properties": {"name": {"type": "string"}, "text": {"type": "string"}},
+                        "required": ["name", "text"]},
+    },
+    {
+        "name": "move_file",
+        "description": ("Move or rename one file. `name` is a path or words from its name; "
+                        "`to` is a folder ('Documents/Taxes'), a full path, or just a new "
+                        "name. Never overwrites."),
+        "inputSchema": {"type": "object",
+                        "properties": {"name": {"type": "string"}, "to": {"type": "string"}},
+                        "required": ["name", "to"]},
+    },
+    {
+        "name": "type_text",
+        "description": ("Dictation: type text into whatever window the user has focused, as "
+                        "if at the keyboard. Write it properly punctuated. It never presses "
+                        "Enter, so nothing is sent or run."),
+        "inputSchema": {"type": "object", "properties": {"text": {"type": "string"}},
+                        "required": ["text"]},
+    },
+    {
+        "name": "discord_control",
+        "description": "Toggle the user's own microphone mute, or deafen, in Discord.",
+        "inputSchema": {"type": "object",
+                        "properties": {"action": {"type": "string", "enum": ["mute", "deafen"]}},
+                        "required": ["action"]},
+    },
+    {
+        "name": "play_music",
+        "description": ("Open Spotify on a search for a song, artist, album or playlist. It "
+                        "shows the results; it cannot press play on one."),
+        "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}},
+                        "required": ["query"]},
+    },
+    {
+        "name": "watch_page",
+        "description": ("Keep checking a web page and tell the user, out loud, when something "
+                        "becomes true: a stream going live, a price dropping below a figure, "
+                        "tickets appearing. `condition` is one plain sentence that can be "
+                        "judged from the page's text; `label` is the few words you will say "
+                        "when it happens."),
+        "inputSchema": {"type": "object",
+                        "properties": {"url": {"type": "string"},
+                                       "condition": {"type": "string"},
+                                       "label": {"type": "string"},
+                                       "every_minutes": {"type": "number"}},
+                        "required": ["url", "condition", "label"]},
+    },
+    {
+        "name": "watches",
+        "description": ("List what is being watched, or stop one: pass `stop` with words from "
+                        "its label, or 'all'."),
+        "inputSchema": {"type": "object", "properties": {"stop": {"type": "string"}}},
+    },
+    {
+        "name": "create_file",
+        "description": ("Create a NEW text file with the given content -- a note, a list, a "
+                        "script, a document. `path` is absolute or relative to the user's home "
+                        "folder: 'Desktop/shopping.txt', 'Documents/ideas.md'. It never "
+                        "overwrites an existing file, and only writes in the user's own "
+                        "folders (or on another drive). Say where you put it."),
+        "inputSchema": {"type": "object",
+                        "properties": {"path": {"type": "string"},
+                                       "content": {"type": "string"}},
+                        "required": ["path", "content"]},
+    },
+    {
         "name": "pc_status",
         "description": ("How the PC is doing: CPU load, memory, the biggest memory users, and "
                         "the graphics card's temperature, load and memory."),

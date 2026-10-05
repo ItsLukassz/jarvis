@@ -137,8 +137,11 @@ def model_is_cached(name: Optional[str] = None) -> bool:
     root = Path(os.getenv("HF_HOME") or (Path.home() / ".cache" / "huggingface"))
     hub = root / "hub" if root.name != "hub" else root
     try:
-        return any(d.is_dir() and d.name.endswith(f"faster-whisper-{name}")
-                   for d in hub.iterdir())
+        # The distilled models live under a differently ordered repo name:
+        # distil-medium.en is Systran/faster-distil-whisper-medium.en.
+        repo = (f"faster-distil-whisper-{name[len('distil-'):]}" if name.startswith("distil-")
+                else f"faster-whisper-{name}")
+        return any(d.is_dir() and d.name.endswith(repo) for d in hub.iterdir())
     except OSError:
         return False
 

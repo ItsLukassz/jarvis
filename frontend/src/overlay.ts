@@ -8,12 +8,14 @@
  */
 
 import { createOrb, type OrbState } from "./orb";
+import { applyTheme } from "./themes";
 import "./style.css";
 
 document.documentElement.classList.add("overlay");
 
 const orb = createOrb(document.getElementById("orb-canvas") as HTMLCanvasElement, 1.35);
 orb.setPaused(true);                     // nothing is drawn while it is hidden
+applyTheme(orb);
 
 // His voice, as the main page's analyser hears it.
 const freq = new Uint8Array(64);
@@ -64,12 +66,20 @@ function hideSoon(ms: number) {
 
 new BroadcastChannel("jarvis-overlay").onmessage = ({ data }) => {
   if (data.type === "config") {
+    applyTheme(orb);
     // Settings changed: appear in the new place for a moment, even though the
     // main window is in front.
     caption.textContent = "This is where I will appear.";
     caption.dataset.who = "said";
     show("preview");
     hideSoon(2500);
+  } else if (data.type === "wake") {
+    orb.setState("listening");
+    document.body.dataset.state = "listening";
+    wordEl.textContent = "listening";
+    caption.textContent = "";
+    show();
+    hideSoon(20000);                 // a wake that never became a request
   } else if (data.type === "freq") {
     freq.set(data.data);
   } else if (data.type === "heard" || data.type === "said") {

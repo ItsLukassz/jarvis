@@ -49,6 +49,11 @@ export interface Capture {
   stop(discard?: boolean): void;
   /** Close the current utterance now -- the server heard "that's it, Jarvis". */
   endNow(): void;
+  /** Wake-word mode: record nothing until `wake()`; stream the mic for the
+   *  server's wake-word model meanwhile. */
+  setWakeGated(on: boolean): void;
+  /** The server heard the wake word: start the utterance, from a moment ago. */
+  wake(): void;
   readonly running: boolean;
 }
 
@@ -57,6 +62,11 @@ export interface Capture {
 // utterance without waiting for SILENCE_MS of quiet.
 const PEEK_EVERY_MS = 1500;
 const PEEK_WINDOW_MS = 4000;
+// ...but not before the utterance is this long. An ordinary command ends on
+// silence well inside it, and every peek is a transcription that competes
+// with the real one for the same model: measured, a 3.6s command took 6.7s to
+// come back while peeks were in flight, and 0.9s on its own.
+const PEEK_AFTER_MS = 5000;
 
 // 16 kHz mono is what every whisper-family model resamples to internally.
 // Sending it at that rate removes a conversion, and a conversion is a place
@@ -67,6 +77,19 @@ const RATE = 16000;
 // development machine was 3/32767 (~0.0001); ordinary speech peaked around
 // 3000 (~0.09). This sits well above the floor and well below the voice.
 const SPEECH_LEVEL = 0.02;
+
+// A fixed level is deaf to the room. With a game or a video playing, the
+// speakers alone sat at 0.02-0.045 at the microphone: every recording started
+// on noise, never saw "silence", and ran to the 30s cap before he answered.
+// So the bar follows the ambient level -- an estimate that drops quickly and
+// rises slowly, so a sentence does not drag it up -- and speech is whatever
+// stands NOISE_FACTOR above it, within [SPEECH_LEVEL, SPEECH_LEVEL_MAX].
+// ponytail: a peak-follower, not real voice detection; loud speech-like noise
+// (a video's dialogue) still passes. Silero VAD in the page is the upgrade.
+const NOISE_FACTOR = 2;
+const NOISE_FALL = 0.2;
+const NOISE_RISE = 0.005;
+const SPEECH_LEVEL_MAX = 0.08;
 
 // How much silence closes an utterance.
 //
@@ -85,12 +108,21 @@ const SPEECH_LEVEL = 0.02;
 // ECHO grace is short so a generous tail does not eat the START of a reply,
 // but that is about echo, not endpointing. Chrome's endpointer, which this
 // replaces and which `speech.py` measured, closes on a longer gap.
-const SILENCE_MS = 1400;
+//
+// 1400 until 2026-10-04; 1100 buys 0.3s on every single reply and is still
+// well clear of the 700 that fragmented. Raise it again if sentences split.
+const SILENCE_MS = 1100;
 
 // Below this, it was a cough or a door. Above it, somebody is dictating and
 // the model's context window is the limit; both ends get cut.
 const MIN_MS = 250;
 const MAX_MS = 30000;
+// Wake-word mode. The recording starts PREROLL_MS before the wake word was
+// confirmed, so "Hey Jarvis" itself is in it; and a woken utterance is a
+// command, not a dictation, so it is cut much sooner if the room never goes
+// quiet.
+const PREROLL_MS = 2500;
+const MAX_WOKEN_MS = 15000;
 
 function encodeWav(samples: Float32Array, rate: number): ArrayBuffer {
   const pcm = new Int16Array(samples.length);
@@ -139,9 +171,10 @@ function toBase64(buf: ArrayBuffer): string {
  *                  transcripts rather than only in a console nobody has open
  */
 export function createCapture(
-  send: (base64Wav: string) => void,
+  send: (base64Wav: string, woken: boolean) => void,
   onEvent: (what: string) => void = () => {},
   peek: (base64Wav: string) => void = () => {},
+  frame: (base64Pcm: string) => void = () => {},
 ): Capture {
   let ctx: AudioContext | null = null;
   let stream: MediaStream | null = null;
@@ -153,6 +186,10 @@ export function createCapture(
   let speaking = false;
   let quietFor = 0;
   let sincePeek = 0;
+  let floor = 0;                // the ambient level, see NOISE_FACTOR
+  let wakeGated = false;
+  let woken = false;            // this utterance was started by the wake word
+  let preroll: Float32Array[] = [];
 
   const reset = () => {
     chunks = [];
@@ -160,6 +197,7 @@ export function createCapture(
     speaking = false;
     quietFor = 0;
     sincePeek = 0;
+    woken = false;
   };
 
   // The tail of the utterance so far, for the server to check for the stop phrase.
@@ -188,9 +226,10 @@ export function createCapture(
       all.set(c, at);
       at += c.length;
     }
+    const wasWoken = woken;
     reset();
     onEvent(`captured ${(ms / 1000).toFixed(1)}s`);
-    send(toBase64(encodeWav(all, RATE)));
+    send(toBase64(encodeWav(all, RATE)), wasWoken);
   };
 
   const onAudio = (e: AudioProcessingEvent) => {
@@ -202,7 +241,23 @@ export function createCapture(
     }
     const ms = (input.length / RATE) * 1000;
 
-    if (peak >= SPEECH_LEVEL) {
+    if (wakeGated && !speaking) {
+      // Nothing is recorded until the server says his name was said. Keep the
+      // last few seconds, and hand this block to the wake-word model.
+      preroll.push(new Float32Array(input));
+      while (preroll.length * ms > PREROLL_MS) preroll.shift();
+      const pcm = new Int16Array(input.length);
+      for (let i = 0; i < input.length; i++) {
+        pcm[i] = Math.max(-1, Math.min(1, input[i])) * 0x7fff;
+      }
+      frame(toBase64(pcm.buffer));
+      return;
+    }
+
+    floor += (peak - floor) * (peak < floor ? NOISE_FALL : NOISE_RISE);
+    const bar = Math.min(SPEECH_LEVEL_MAX, Math.max(SPEECH_LEVEL, floor * NOISE_FACTOR));
+
+    if (peak >= bar) {
       if (!speaking) {
         speaking = true;
         onEvent("speech started");
@@ -219,12 +274,12 @@ export function createCapture(
       // grown without bound: the model has a context window and the server
       // has a frame limit, and hitting either loses the whole thing instead
       // of the tail.
-      if (quietFor >= SILENCE_MS || (samples / RATE) * 1000 >= MAX_MS) {
+      if (quietFor >= SILENCE_MS || (samples / RATE) * 1000 >= (woken ? MAX_WOKEN_MS : MAX_MS)) {
         flush();
         return;
       }
       sincePeek += ms;
-      if (sincePeek >= PEEK_EVERY_MS) {
+      if (sincePeek >= PEEK_EVERY_MS && (samples / RATE) * 1000 >= PEEK_AFTER_MS) {
         sincePeek = 0;
         sendPeek();
       }
@@ -257,6 +312,21 @@ export function createCapture(
         const e = err as Error;
         onEvent(`capture failed: ${e.name}: ${e.message}`);
       }
+    },
+    setWakeGated(on: boolean) {
+      wakeGated = on;
+      preroll = [];
+    },
+    wake() {
+      if (!running || speaking) return;
+      chunks = preroll;
+      preroll = [];
+      samples = chunks.reduce((n, c) => n + c.length, 0);
+      speaking = true;
+      woken = true;
+      quietFor = 0;
+      sincePeek = 0;
+      onEvent("speech started (wake word)");
     },
     endNow() {
       // A reply that arrives after this utterance already ended on silence

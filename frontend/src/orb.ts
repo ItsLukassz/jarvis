@@ -18,6 +18,8 @@ export type OrbState = "idle" | "listening" | "thinking" | "speaking" | "compact
 export interface Orb {
   setState(s: OrbState): void;
   setPaused(p: boolean): void;
+  /** One colour per state (see themes.ts). */
+  setPalette(colours: Record<OrbState, string>): void;
   setAnalyser(a: AnalyserNode | null): void;
   destroy(): void;
 }
@@ -495,6 +497,9 @@ export function createOrb(canvas: HTMLCanvasElement, zoom = 1): Orb {
 
   return {
     setState(s: OrbState) { state = s; },
+    setPalette(colours: Record<OrbState, string>) {
+      for (const k of Object.keys(PALETTE) as OrbState[]) PALETTE[k].set(colours[k]);
+    },
     setPaused(p: boolean) {
       const was = paused;
       paused = p;

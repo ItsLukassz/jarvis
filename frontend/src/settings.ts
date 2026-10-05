@@ -1,3 +1,4 @@
+import { THEMES, applyTheme, currentTheme, saveTheme } from "./themes";
 /**
  * JARVIS — Settings Panel
  *
@@ -200,6 +201,16 @@ function buildPanelHTML(): string {
              storage and applied as it is changed: the overlay window reads it
              and shows itself for a moment so the choice can be seen. -->
         <section class="settings-section" id="section-overlay">
+          <h3>Appearance</h3>
+
+          <div class="settings-field">
+            <label>Theme</label>
+            <div class="theme-row" id="theme-row">
+              ${Object.entries(THEMES).map(([name, c]) =>
+                `<button type="button" data-theme="${name}"><i style="--swatch: linear-gradient(90deg, ${c.idle} 0 25%, ${c.listening} 25% 50%, ${c.thinking} 50% 75%, ${c.speaking} 75%)"></i>${name}</button>`).join("")}
+            </div>
+          </div>
+
           <h3>Overlay Orb</h3>
 
           <div class="settings-field">
@@ -216,6 +227,42 @@ function buildPanelHTML(): string {
             <p class="settings-hint">
               It appears while JARVIS is hearing a request, thinking or
               speaking, and only when this window is not in front.
+            </p>
+          </div>
+        </section>
+
+        <!-- Who he listens to. Both are local models and both are off until
+             switched on here. -->
+        <section class="settings-section" id="section-hearing">
+          <h3>Hearing</h3>
+
+          <div class="settings-field">
+            <label>
+              <input type="checkbox" id="input-wake-engine" />
+              Wake-word listener: only record after &ldquo;Hey Jarvis&rdquo;
+            </label>
+            <p class="settings-hint">
+              A small model listens for &ldquo;Hey Jarvis&rdquo; and nothing is
+              recorded or transcribed until it hears it, so room noise and
+              other voices cost nothing. A bare &ldquo;Jarvis&rdquo; is not
+              reliably caught: say &ldquo;Hey Jarvis&rdquo;.
+            </p>
+          </div>
+
+          <div class="settings-field">
+            <label>
+              <input type="checkbox" id="input-voice-lock" />
+              Voice lock: answer only my voice
+            </label>
+            <div class="settings-input-row" style="margin-top:8px">
+              <button class="settings-btn" id="btn-voice-learn">Learn my voice</button>
+              <button class="settings-btn" id="btn-voice-forget">Forget it</button>
+            </div>
+            <p class="settings-hint" id="voice-lock-status"></p>
+            <label style="margin-top:10px">Strictness <span id="voice-lock-threshold-value" style="float:right"></span></label>
+            <input type="range" id="voice-lock-threshold" min="0.3" max="0.7" step="0.05" style="width:100%" />
+            <p class="settings-hint">
+              Lower it if he ignores you; raise it if he answers other people.
             </p>
           </div>
         </section>
@@ -344,7 +391,19 @@ function wireOverlaySettings() {
   const cfg = { pos: saved.pos ?? "bottom-center", size: saved.size ?? 440 };
   const channel = new BroadcastChannel("jarvis-overlay");
 
+  const themes = document.getElementById("theme-row");
+  themes?.addEventListener("click", (e) => {
+    const name = (e.target as HTMLElement).closest("button")?.dataset.theme;
+    if (!name) return;
+    saveTheme(name);
+    applyTheme();
+    channel.postMessage({ type: "config" });      // the orb here and in the overlay follow
+    render();
+  });
+
   const render = () => {
+    themes?.querySelectorAll("button").forEach((b) =>
+      b.classList.toggle("active", b.dataset.theme === currentTheme()));
     grid.querySelectorAll("button").forEach((b) =>
       b.classList.toggle("active", b.dataset.pos === cfg.pos));
     size.value = String(cfg.size);
@@ -363,8 +422,48 @@ function wireOverlaySettings() {
   render();
 }
 
+// Hearing: the wake-word listener and voice lock (hearing.py).
+function wireHearingSettings() {
+  const wake = document.getElementById("input-wake-engine") as HTMLInputElement | null;
+  const lock = document.getElementById("input-voice-lock") as HTMLInputElement | null;
+  const note = document.getElementById("voice-lock-status");
+  const strict = document.getElementById("voice-lock-threshold") as HTMLInputElement | null;
+  const strictValue = document.getElementById("voice-lock-threshold-value");
+  if (!wake || !lock || !note || !strict || !strictValue) return;
+  let poll = 0;
+
+  const show = (h: Record<string, unknown>) => {
+    wake.checked = Boolean(h.wake_engine);
+    wake.disabled = !h.wake_available;
+    lock.checked = Boolean(h.voice_lock);
+    lock.disabled = !h.enrolled;
+    strict.value = String(h.threshold);
+    strictValue.textContent = Number(h.threshold).toFixed(2);
+    const left = Number(h.enrolling);
+    note.textContent = !h.voice_lock_available ? "The voice model is not installed."
+      : left > 0 ? `Listening: say ${left} more full sentence${left > 1 ? "s" : ""}, each starting with "Hey Jarvis".`
+      : h.enrolled ? "Your voice is learned." : "Not learned yet. Press Learn my voice, then say three sentences.";
+    clearTimeout(poll);
+    if (left > 0) poll = window.setTimeout(refresh, 1500);     // follow the enrolment along
+    window.dispatchEvent(new CustomEvent("jarvis-hearing"));
+  };
+  const refresh = () => fetch("/api/hearing").then((r) => r.json()).then(show).catch(() => {});
+  const send = (body: Record<string, unknown>) =>
+    fetch("/api/hearing", { method: "POST", headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify(body) })
+      .then((r) => r.json()).then(show).catch(() => {});
+
+  wake.addEventListener("change", () => send({ wake_engine: wake.checked }));
+  lock.addEventListener("change", () => send({ voice_lock: lock.checked }));
+  strict.addEventListener("change", () => send({ threshold: Number(strict.value) }));
+  document.getElementById("btn-voice-learn")?.addEventListener("click", () => send({ action: "enroll" }));
+  document.getElementById("btn-voice-forget")?.addEventListener("click", () => send({ action: "forget" }));
+  refresh();
+}
+
 function wireEvents() {
   wireOverlaySettings();
+  wireHearingSettings();
   // Close
   document.getElementById("settings-close")?.addEventListener("click", closeSettings);
   document.getElementById("settings-backdrop")?.addEventListener("click", closeSettings);

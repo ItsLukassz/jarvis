@@ -297,7 +297,10 @@ def test_answering_a_dialog_survives(call):
     most of what JARVIS is for: "what's it asking? … allow it"."""
     server = call[2]
     assert server._untrusted_content_refusal("answer_dialog", True) is None
-    assert server.TAINT_EXEMPT_ACTING == {"answer_dialog"}
+    # ...and putting text on the clipboard, which the user must still paste
+    # himself: "translate what I copied" is a read and a write in one turn.
+    assert server._untrusted_content_refusal("write_clipboard", True) is None
+    assert server.TAINT_EXEMPT_ACTING == {"answer_dialog", "write_clipboard"}
 
 
 def test_steering_and_running_a_command_are_no_longer_exempt(call):

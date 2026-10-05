@@ -31,7 +31,7 @@ html, body {
 }
 
 body {
-  --accent: #3d8bff;
+  --accent: var(--c-idle, #3d8bff);
   transition: --accent 0.9s ease;
   /* top to bottom: edge fade, accent bloom behind the orb, grid */
   background:
@@ -55,10 +55,11 @@ body {
   z-index: 15;
 }
 #controls { -webkit-app-region: no-drag; }
-body[data-state="listening"]  { --accent: #22e3ff; }
-body[data-state="thinking"]   { --accent: #a07bff; }
-body[data-state="speaking"]   { --accent: #ffb347; }
-body[data-state="compacting"] { --accent: #3a5f8a; }
+/* The colours themselves come from the theme (themes.ts sets --c-<state>). */
+body[data-state="listening"]  { --accent: var(--c-listening, #22e3ff); }
+body[data-state="thinking"]   { --accent: var(--c-thinking, #a07bff); }
+body[data-state="speaking"]   { --accent: var(--c-speaking, #ffb347); }
+body[data-state="compacting"] { --accent: var(--c-compacting, #3a5f8a); }
 body.is-paused                { --accent: #6b7280; }
 
 /* Corner brackets */
@@ -616,6 +617,35 @@ body[data-state="thinking"] #state-word { animation: breathe 1.4s ease-in-out in
   margin-top: 8px;
   display: flex;
   justify-content: flex-end;
+}
+
+/* Theme picker: one swatch per theme, striped with its state colours */
+.theme-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.theme-row button {
+  width: 62px;
+  padding: 0 0 5px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: capitalize;
+  cursor: pointer;
+  overflow: hidden;
+  transition: all 0.15s;
+}
+.theme-row button i {
+  display: block;
+  height: 26px;
+  margin-bottom: 5px;
+  background: var(--swatch);
+}
+.theme-row button:hover { border-color: rgba(255, 255, 255, 0.35); }
+.theme-row button.active {
+  border-color: #fff;
+  color: #fff;
+  box-shadow: 0 0 12px rgba(255, 255, 255, 0.25);
 }
 
 /* Overlay orb: a 3x3 picker standing in for the screen */

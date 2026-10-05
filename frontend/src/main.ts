@@ -10,6 +10,7 @@ import { createVoiceInput, createAudioPlayer, createMicMonitor } from "./voice";
 import { createCapture } from "./capture";
 import { createSocket } from "./ws";
 import { openSettings, checkFirstTimeSetup } from "./settings";
+import { applyTheme } from "./themes";
 import "./style.css";
 
 // ---------------------------------------------------------------------------
@@ -37,6 +38,10 @@ const stateWordEl = document.getElementById("state-word")!;
 
 // The overlay window mirrors this page (see overlay.ts).
 const overlayChannel = new BroadcastChannel("jarvis-overlay");
+// Settings announces a change of theme (or of the overlay's place) on it.
+overlayChannel.onmessage = ({ data }) => {
+  if (data?.type === "config") applyTheme(orb);
+};
 
 // The big word under the orb. #status-text beneath it is left for notices.
 function updateStatus(state: State) {
@@ -85,6 +90,8 @@ const orb = createOrb(canvas);
 const wsProto = window.location.protocol === "https:" ? "wss:" : "ws:";
 const WS_URL = `${wsProto}//${window.location.host}/ws/voice`;
 const socket = createSocket(WS_URL);
+
+applyTheme(orb);
 
 const audioPlayer = createAudioPlayer();
 orb.setAnalyser(audioPlayer.getAnalyser());
@@ -153,17 +160,31 @@ const voiceInput = createVoiceInput(
 // On the default install this is `browser`, nothing below runs, and the
 // recogniser above stays in charge exactly as it always has.
 const capture = createCapture(
-  (data: string) => {
+  (data: string, woken: boolean) => {
     micMonitor.sawSpeech();
-    socket.send({ type: "audio_in", data });
+    socket.send({ type: "audio_in", data, woken });
   },
   (event: string) => {
     socket.send({ type: "mic", text: `capture: ${event}` });
   },
   (data: string) => {
     socket.send({ type: "audio_peek", data });
+  },
+  (data: string) => {
+    socket.send({ type: "audio_frame", data });
   }
 );
+
+// The dedicated wake-word listener (Settings > Hearing). Asked at start and
+// again whenever Settings changes it.
+function syncHearing() {
+  fetch("/api/hearing")
+    .then((r) => r.json())
+    .then((h) => capture.setWakeGated(Boolean(h?.wake_engine)))
+    .catch(() => capture.setWakeGated(false));      // unknown: listen the ordinary way
+}
+syncHearing();
+window.addEventListener("jarvis-hearing", syncHearing);
 
 // A PROMISE, resolved before either recogniser is started — not a `stop()`
 // fired at load.
@@ -277,6 +298,10 @@ socket.onMessage((msg) => {
   } else if (type === "stop") {
     audioPlayer.stop();
     transition(earsOff() ? "idle" : "listening");
+  } else if (type === "wake") {
+    // His name was heard: record from a moment ago, and show the orb at once.
+    capture.wake();
+    overlayChannel.postMessage({ type: "wake" });
   } else if (type === "end_utterance") {
     // The server heard "that's it, Jarvis": stop listening to this command now.
     capture.endNow();

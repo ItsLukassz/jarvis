@@ -85,7 +85,8 @@ def close_app(name: str) -> str:
 
 _KEYEVENTF_KEYUP = 0x2
 _VK = {"play_pause": 0xB3, "next": 0xB0, "previous": 0xB1, "stop": 0xB2,
-       "alt": 0x12, "win": 0x5B, "shift": 0x10, "right": 0x27}
+       "alt": 0x12, "win": 0x5B, "shift": 0x10, "right": 0x27,
+       "ctrl": 0x11, "enter": 0x0D, "f11": 0x7A, "f12": 0x7B}
 
 
 def _tap(*keys: str) -> None:
@@ -200,6 +201,257 @@ def clipboard_write(text: str) -> None:
     subprocess.run(_PS + ["[Console]::InputEncoding=[Text.Encoding]::UTF8; "
                           "Set-Clipboard -Value ([Console]::In.ReadToEnd())"],
                    input=text.encode("utf-8"), timeout=10, check=True, creationflags=_NO_WINDOW)
+
+
+# ── files ───────────────────────────────────────────────────────────────────
+
+FILE_MAX_CHARS = 200_000
+# Never written into, wherever they sit in the path: the OS, installed
+# programs, and the per-user folder that holds Startup and every app's config.
+_NO_WRITE_DIRS = {"windows", "program files", "program files (x86)", "programdata",
+                  "appdata", "$recycle.bin", "system volume information"}
+# Text written under one of these names would be a broken program, not a file.
+_NO_WRITE_SUFFIXES = {".exe", ".dll", ".sys", ".scr", ".msi", ".com", ".lnk"}
+
+
+def _check_writable(target: Path) -> None:
+    """Raise unless `target` (resolved) is somewhere JARVIS may write."""
+    home = Path.home().resolve()
+    if target.suffix.lower() in _NO_WRITE_SUFFIXES:
+        raise PcError("I don't create files of that kind")
+    if home in target.parents:
+        inside = [part.lower() for part in target.relative_to(home).parts[:-1]]
+        own = Path(__file__).resolve().parent
+        if (set(inside) & _NO_WRITE_DIRS or any(part.startswith(".") for part in inside)
+                or own == target.parent or own in target.parents):
+            raise PcError("I don't touch files there")
+    elif target.drive.lower() == home.drive.lower():
+        raise PcError("On this drive I only work in your own folders")
+    elif {part.lower() for part in target.parts} & _NO_WRITE_DIRS:
+        raise PcError("I don't touch files there")
+
+
+# Where "that PDF I downloaded" is looked for.
+_SEARCH_FOLDERS = ("Desktop", "Documents", "Downloads", "Pictures", "Videos", "Music")
+_SEARCH_DEPTH = 3
+_SEARCH_MAX_SEEN = 50_000
+# Opening one of these would RUN it; open_file is for documents.
+_NO_OPEN_SUFFIXES = _NO_WRITE_SUFFIXES | {".bat", ".cmd", ".ps1", ".vbs", ".js", ".jse", ".wsf",
+                                          ".hta", ".py", ".pyw", ".jar", ".reg", ".cpl", ".pif"}
+
+
+def find_files(query: str, folder: str = "", days: float = 0) -> list[Path]:
+    """Files whose NAME contains every word of `query`, newest first.
+
+    Looked for in the user's Desktop, Documents, Downloads, Pictures, Videos
+    and Music (or just `folder`, relative to home), three levels deep.
+    ponytail: a bounded os.walk, not an index; Windows Search is the upgrade
+    if the folders grow past what a walk covers in a second or two.
+    """
+    import time
+    home = Path.home().resolve()
+    words = (query or "").lower().split()
+    if folder:
+        root = (home / folder).resolve()
+        if home != root and home not in root.parents:
+            raise PcError("I only look in your own folders")
+        roots = [root]
+    else:
+        roots = [home / name for name in _SEARCH_FOLDERS]
+    newer_than = time.time() - days * 86400 if days and days > 0 else 0
+    hits: list[tuple[float, Path]] = []
+    seen = 0
+    for root in roots:
+        for here, dirs, files in os.walk(root):
+            depth = len(Path(here).relative_to(root).parts)
+            dirs[:] = [] if depth >= _SEARCH_DEPTH else [
+                d for d in dirs if not d.startswith(".") and d.lower() not in _NO_WRITE_DIRS
+                and d != "node_modules"]
+            for name in files:
+                seen += 1
+                if seen > _SEARCH_MAX_SEEN:
+                    break
+                if all(w in name.lower() for w in words):
+                    try:
+                        mtime = os.path.getmtime(os.path.join(here, name))
+                    except OSError:
+                        continue
+                    if mtime >= newer_than:
+                        hits.append((mtime, Path(here) / name))
+    return [path for _, path in sorted(hits, reverse=True)]
+
+
+def _resolve(name: str) -> Path:
+    """An existing file: a real path (absolute, or relative to home), else the
+    newest file whose name matches. So "shopping list" finds the list without
+    the brain ever having to read a directory listing first."""
+    raw = os.path.expandvars(os.path.expanduser((name or "").strip().strip('"')))
+    if not raw:
+        raise PcError("Which file")
+    direct = Path(raw) if Path(raw).is_absolute() else Path.home() / raw
+    if direct.is_file():
+        return direct.resolve()
+    hits = find_files(Path(raw).name)
+    if not hits:
+        raise PcError("I couldn't find a file like that")
+    return hits[0].resolve()
+
+
+def open_file(name: str) -> str:
+    """Open a document with its default program; returns the path opened."""
+    target = _resolve(name)
+    if target.suffix.lower() in _NO_OPEN_SUFFIXES:
+        raise PcError("That's a program or a script, and I only open documents")
+    try:
+        os.startfile(target)                                   # noqa: S606
+    except OSError:
+        raise PcError("Windows couldn't open that file") from None
+    return str(target)
+
+
+def append_file(name: str, text: str) -> str:
+    """Add `text` as new lines at the end of an existing text file."""
+    target = _resolve(name)
+    _check_writable(target)
+    if len(text) > FILE_MAX_CHARS or target.stat().st_size > 5_000_000:
+        raise PcError("That's more than I'll add to one file")
+    try:
+        existing = target.read_text(encoding="utf-8")
+    except (UnicodeDecodeError, OSError):
+        raise PcError("That isn't a plain text file, so I've left it alone") from None
+    gap = "" if not existing or existing.endswith("\n") else "\n"
+    try:
+        with open(target, "a", encoding="utf-8", newline="") as fh:
+            fh.write(f"{gap}{text.rstrip()}\n")
+    except OSError:
+        raise PcError("Windows wouldn't let me change that file") from None
+    return str(target)
+
+
+def move_file(name: str, to: str) -> str:
+    """Move or rename one file; never onto an existing one. `to` is a folder
+    (the name is kept), a full path, or just a new name (it stays put, and
+    keeps its extension if the new name has none)."""
+    import shutil
+    source = _resolve(name)
+    raw = os.path.expandvars(os.path.expanduser((to or "").strip().strip('"')))
+    if not raw:
+        raise PcError("Where should it go")
+    if not any(sep in raw for sep in "/\\") and not (Path.home() / raw).is_dir():
+        dest = source.with_name(raw if Path(raw).suffix else raw + source.suffix)
+    else:
+        dest = Path(raw) if Path(raw).is_absolute() else Path.home() / raw
+        if dest.is_dir():
+            dest = dest / source.name
+    dest = dest.resolve()
+    _check_writable(source)
+    _check_writable(dest)
+    if dest.exists():
+        raise PcError("There's already a file with that name there")
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(source), str(dest))
+    except OSError:
+        raise PcError("Windows wouldn't let me move that file") from None
+    return str(dest)
+
+
+# ── typing ──────────────────────────────────────────────────────────────────
+
+TYPE_MAX_CHARS = 2000
+_KEYEVENTF_UNICODE = 0x4
+
+
+class _KEYBDINPUT(ctypes.Structure):
+    _fields_ = [("wVk", wintypes.WORD), ("wScan", wintypes.WORD), ("dwFlags", wintypes.DWORD),
+                ("time", wintypes.DWORD), ("dwExtraInfo", ctypes.c_void_p)]
+
+
+class _INPUT(ctypes.Structure):
+    class _U(ctypes.Union):
+        _fields_ = [("ki", _KEYBDINPUT), ("pad", ctypes.c_byte * 32)]
+    _anonymous_ = ("u",)
+    _fields_ = [("type", wintypes.DWORD), ("u", _U)]
+
+
+def type_text(text: str) -> int:
+    """Type `text` into whichever window has the keyboard. A line break is
+    Shift+Enter -- a new line in a chat box or an editor -- and never a bare
+    Enter, so dictation cannot send a message or run a command by itself."""
+    text = (text or "")[:TYPE_MAX_CHARS]
+    if not text:
+        raise PcError("There was nothing to type")
+    user32 = ctypes.windll.user32
+    for line_no, line in enumerate(text.replace("\r\n", "\n").split("\n")):
+        if line_no:
+            _tap("shift", "enter")
+        units = line.encode("utf-16-le")
+        events = []
+        for i in range(0, len(units), 2):
+            unit = int.from_bytes(units[i:i + 2], "little")
+            for flags in (_KEYEVENTF_UNICODE, _KEYEVENTF_UNICODE | _KEYEVENTF_KEYUP):
+                event = _INPUT(type=1)                         # INPUT_KEYBOARD
+                event.ki = _KEYBDINPUT(0, unit, flags, 0, None)
+                events.append(event)
+        if events:
+            user32.SendInput(len(events), (_INPUT * len(events))(*events), ctypes.sizeof(_INPUT))
+    return len(text)
+
+
+# ── discord, music ──────────────────────────────────────────────────────────
+
+# Discord has no mute key until the user gives it one. These are the two
+# JARVIS presses; they are set once in Discord > Settings > Keybinds.
+_DISCORD_KEYS = {"mute": ("ctrl", "alt", "f11"), "deafen": ("ctrl", "alt", "f12")}
+
+
+def discord(action: str) -> None:
+    if action not in _DISCORD_KEYS:
+        raise PcError("I can toggle mute or deafen in Discord")
+    _tap(*_DISCORD_KEYS[action])
+
+
+def music_search(query: str) -> None:
+    """Open Spotify on a search for `query`.
+    ponytail: opens the results, does not press play -- starting a named track
+    needs Spotify's Web API (an app registration and a login)."""
+    from urllib.parse import quote
+    if not (query or "").strip():
+        raise PcError("What should I look for")
+    try:
+        os.startfile("spotify:search:" + quote(query.strip()[:120]))   # noqa: S606
+    except OSError:
+        raise PcError("Spotify doesn't seem to be installed") from None
+
+
+def create_file(path: str, content: str) -> str:
+    """Create a NEW text file and return where it went.
+
+    `path` is absolute, or relative to the user's home folder, so
+    "Desktop/notes.txt" is the desktop. It is a creator, not an editor: an
+    existing file is never overwritten, because a misheard name must not cost
+    anyone their work. On the system drive only the user's own folders are
+    written to (not AppData, not dot-folders such as .ssh, not JARVIS's own
+    folder); other drives are allowed outside their system folders.
+    """
+    raw = os.path.expandvars(os.path.expanduser((path or "").strip().strip('"')))
+    if not raw:
+        raise PcError("I need a name for the file")
+    if len(content) > FILE_MAX_CHARS:
+        raise PcError("That's more text than I'll put in one file")
+    home = Path.home().resolve()
+    target = Path(raw)
+    target = (target if target.is_absolute() else home / target).resolve()
+    _check_writable(target)
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with open(target, "x", encoding="utf-8", newline="") as fh:
+            fh.write(content)
+    except FileExistsError:
+        raise PcError("There's already a file with that name, and I won't overwrite it") from None
+    except OSError:
+        raise PcError("Windows wouldn't let me create that file") from None
+    return str(target)
 
 
 # ── status ──────────────────────────────────────────────────────────────────

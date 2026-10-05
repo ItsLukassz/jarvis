@@ -42,3 +42,7 @@ av<19
 # JARVIS_STT_DEVICE=cuda on Windows: the CUDA libraries ctranslate2 needs.
 nvidia-cublas-cu12; sys_platform == "win32"
 nvidia-cudnn-cu12==9.*; sys_platform == "win32"
+# Optional, both off until switched on in Settings > Hearing (see hearing.py).
+# Their models are fetched separately into data/models.
+sherpa-onnx        # voice lock: speaker embeddings
+openwakeword       # the "Hey Jarvis" wake-word listener

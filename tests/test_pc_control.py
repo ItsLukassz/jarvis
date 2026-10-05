@@ -58,3 +58,49 @@ def test_every_pc_tool_is_an_acting_tool_and_only_offered_where_it_works(server)
     assert pc_tools and pc_tools <= server.ACTING_TOOLS
     assert pc_tools <= set(server.TOOL_HANDLERS)
     assert "read_clipboard" in server.TAINTING_TOOLS, "copied text is somebody else's words"
+
+
+def test_create_file_writes_only_new_files_in_the_users_own_folders(tmp_path, monkeypatch):
+    import pc_control
+    monkeypatch.setattr(pc_control.Path, "home", classmethod(lambda cls: tmp_path))
+    made = pc_control.create_file("Desktop/notes.txt", "milk")
+    assert made == str(tmp_path / "Desktop" / "notes.txt")
+    assert (tmp_path / "Desktop" / "notes.txt").read_text(encoding="utf-8") == "milk"
+    for bad in ("Desktop/notes.txt",                       # exists: never overwritten
+                ".ssh/authorized_keys",                    # a dot-folder
+                "AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/x.bat",
+                str(tmp_path.parent / "elsewhere.txt"),    # same drive, outside home
+                r"C:\Windows\System32\drivers\etc\hosts2",
+                "Desktop/setup.exe"):
+        with pytest.raises(pc_control.PcError):
+            pc_control.create_file(bad, "x")
+    assert (tmp_path / "Desktop" / "notes.txt").read_text(encoding="utf-8") == "milk"
+
+
+def test_files_are_found_by_name_and_only_moved_or_grown_in_the_users_folders(tmp_path, monkeypatch):
+    import pc_control
+    monkeypatch.setattr(pc_control.Path, "home", classmethod(lambda cls: tmp_path))
+    (tmp_path / "Documents").mkdir()
+    lst = tmp_path / "Documents" / "Shopping List.txt"
+    lst.write_text("eggs", encoding="utf-8")
+    (tmp_path / "Downloads").mkdir()
+    (tmp_path / "Downloads" / "setup.exe").write_bytes(b"MZ")
+
+    assert pc_control.find_files("shopping list") == [lst]
+    pc_control.append_file("shopping list", "milk")          # by name, no listing first
+    assert lst.read_text(encoding="utf-8") == "eggs\nmilk\n"
+
+    moved = pc_control.move_file("shopping list", "groceries")   # a bare name renames in place
+    assert moved == str(tmp_path / "Documents" / "groceries.txt")
+    with pytest.raises(pc_control.PcError):
+        pc_control.move_file("groceries", ".ssh/x.txt")
+    with pytest.raises(pc_control.PcError):
+        pc_control.open_file("setup")                        # a program is never "opened"
+
+
+def test_only_his_name_with_a_stop_word_and_nothing_else_stops_him():
+    import server
+    for said in ("Jarvis, stop.", "stop, Jarvis!", "Hey Jarvis, shut up", "Jervis stop talking"):
+        assert server._is_voice_stop(said), said
+    for said in ("stop", "Jarvis, stop the music", "Travis be quiet", "that's enough"):
+        assert not server._is_voice_stop(said), said
