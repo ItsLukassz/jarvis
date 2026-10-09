@@ -11,3 +11,5 @@
 @import "./theme/shell.css";
 @import "./theme/primitives.css";
 @import "./theme/views.css";
+/* The command-deck layout and finish; overrides only. Last, so it wins. */
+@import "./theme/deck.css";

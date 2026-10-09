@@ -52,9 +52,11 @@ Projects drills into one project's conversations, runs and build progress.
 Usage ends on the subscription's two gauges — a five-hour window at 62 per
 cent and a seven-day one at 84 per cent.](docs/images/dashboard-walkthrough.gif)
 
-*The whole dashboard, clicked through. Fictional sample data throughout — the
-projects, prompts, people and figures in every screenshot on this page are
-invented.*
+*The whole dashboard, clicked through. Every view sits under the same hero —
+an orb, the clock, and the subscription's two windows as dials — and is
+reached from a floating dock at the bottom; the colours follow the theme
+chosen in the voice window. Fictional sample data throughout — the projects,
+prompts, people and figures in every screenshot on this page are invented.*
 
 ---
 
@@ -164,8 +166,8 @@ time.](docs/images/dashboard-runs.png)
 *The Runs view. Every Claude Code process JARVIS starts is a row here, with
 the prompt that started it. Fictional sample data.*
 
-The dashboard has six tabs — Runs, Sessions, Memory, Specs, Projects and
-Usage. Usage shows what your subscription's five-hour and seven-day windows
+The dashboard has six sections in its dock — Runs, Sessions, Memory, Specs,
+Projects and Usage. Usage shows what your subscription's five-hour and seven-day windows
 have left, and who spent it.
 
 ![The Sessions view. On the left, a "Needs You" panel with two blocked

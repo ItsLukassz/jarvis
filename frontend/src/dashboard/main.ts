@@ -5,6 +5,7 @@
 //
 // `prompt`, `project_name` and the now-line all originate in model output or
 // on someone's disk: every one of them goes through textContent.
+import { THEMES, currentTheme } from "../themes";
 import {
   listRuns, getStats, getUsageLimits,
   type RunRow, type UsageSnapshot,
@@ -22,6 +23,32 @@ import {
   emptyState, flash,
   type BarParts, type ReadoutParts, type Tone,
 } from "./ui";
+
+// The dashboard wears the theme chosen in the voice window's Settings: its
+// accent is that theme's "listening" colour (the same origin, so the same
+// localStorage).
+{
+  const theme = THEMES[currentTheme()];
+  const root = document.documentElement.style;
+  root.setProperty("--accent", theme.listening);
+  root.setProperty("--accent-2", theme.thinking);
+  root.setProperty("--accent-3", theme.speaking);
+}
+
+// The hero's clock.
+{
+  const timeEl = document.getElementById("hero-time");
+  const dateEl = document.getElementById("hero-date");
+  const tick = () => {
+    const now = new Date();
+    if (timeEl) timeEl.textContent = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    if (dateEl) {
+      dateEl.textContent = now.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
+    }
+  };
+  tick();
+  setInterval(tick, 10_000);
+}
 
 const ACTIVE = new Set(["queued", "running"]);
 const FAILED = new Set(["failed", "timed_out"]);

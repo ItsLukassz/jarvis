@@ -1,0 +1,434 @@
+/* ===========================================================================
+   JARVIS DASHBOARD — DECK
+   ---------------------------------------------------------------------------
+   The look and the layout, laid over the four files before it. Deliberately
+   NOT the thin-line hologram those files draw:
+
+     · the ground is a slow aurora in the theme's three colours, no grid;
+     · the page opens on a hero — an orb, the clock, and the subscription as
+       two dials — instead of a masthead strip;
+     · navigation is a floating dock at the bottom, with icons;
+     · content is a bento of large, soft, rounded cards, in sentence case.
+
+   The three colours come from the theme chosen in the voice window's
+   Settings (dashboard/main.ts sets --accent, --accent-2 and --accent-3).
+
+   Only overrides live here; the primitives' structure and their tone
+   mechanism are untouched.
+   =========================================================================== */
+
+:root {
+  --accent:   #22e3ff;
+  --accent-2: #a07bff;
+  --accent-3: #ffb347;
+  --accent-bright: color-mix(in srgb, var(--accent) 60%, white);
+
+  --ground:         #06070d;
+  --card:           linear-gradient(155deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.022));
+  --card-edge:      rgba(255, 255, 255, 0.09);
+  --surface:        rgba(255, 255, 255, 0.045);
+  --surface-raised: rgba(255, 255, 255, 0.09);
+  --surface-sunk:   rgba(0, 0, 0, 0.3);
+  --edge:           rgba(255, 255, 255, 0.08);
+  --edge-strong:    rgba(255, 255, 255, 0.18);
+  --edge-hot:       color-mix(in srgb, var(--accent) 60%, transparent);
+  --tone-soft:      color-mix(in srgb, var(--tone) 16%, transparent);
+  --glow-panel:     0 30px 60px -40px rgba(0, 0, 0, 0.9), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --glow-text:      none;
+
+  --text:       #f2f5fb;
+  --text-dim:   rgba(242, 245, 251, 0.62);
+  --text-faint: rgba(242, 245, 251, 0.38);
+
+  --font-ui: "Segoe UI Variable Display", "Segoe UI Variable Text", "Segoe UI", -apple-system,
+             BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;
+
+  --fs-micro: 11px;
+  --fs-label: 12px;
+  --fs-sm:    12.5px;
+  --fs-base:  13.5px;
+  --fs-body:  14.5px;
+  --fs-lg:    18px;
+  --fs-xl:    26px;
+  --fs-2xl:   40px;
+
+  /* Sentence case, set normally: the wide-tracked capitals were the old look. */
+  --ls-title: 0;
+  --ls-label: 0.01em;
+  --ls-wide:  0.01em;
+
+  --radius:    14px;
+  --radius-lg: 24px;
+  --shell-max: 1360px;
+}
+.tone-accent, .tone-ok, .tone-warn, .tone-bad, .tone-idle, .tone-dim {
+  --tone-soft: color-mix(in srgb, var(--tone) 16%, transparent);
+}
+
+/* ── Ground: an aurora, drifting ──────────────────────────────────────────── */
+body { background: var(--ground); padding-bottom: 120px; }
+body::before {
+  inset: -20%;
+  background:
+    radial-gradient(38% 42% at 22% 24%, color-mix(in srgb, var(--accent) 34%, transparent), transparent 70%),
+    radial-gradient(34% 40% at 80% 18%, color-mix(in srgb, var(--accent-2) 30%, transparent), transparent 70%),
+    radial-gradient(40% 44% at 62% 86%, color-mix(in srgb, var(--accent-3) 16%, transparent), transparent 70%);
+  filter: blur(40px);
+  animation: aurora 26s ease-in-out infinite alternate;
+}
+@keyframes aurora {
+  0%   { transform: translate3d(-3%, -2%, 0) scale(1); }
+  50%  { transform: translate3d(3%, 2%, 0) scale(1.08); }
+  100% { transform: translate3d(-1%, 4%, 0) scale(1.03); }
+}
+body::after { content: none; }                 /* no scan lines */
+
+/* ── Hero ─────────────────────────────────────────────────────────────────── */
+.shell-head {
+  position: relative;
+  z-index: 2;
+  background: none;
+  backdrop-filter: none;
+  border: 0;
+}
+.shell-head-top {
+  display: grid;
+  grid-template-columns: minmax(300px, 0.9fr) minmax(0, 2fr);
+  grid-template-areas: "brand stats" "clock stats" "link stats";
+  align-items: start;
+  gap: 4px 36px;
+  padding: 40px 36px 12px;
+}
+
+.brand { grid-area: brand; align-items: center; gap: 10px; margin: -18px 0 0 -18px; }
+.brand-text { display: flex; flex-direction: column; gap: 2px; }
+.brand-mark {
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  text-transform: none;
+  background: linear-gradient(100deg, #fff 10%, var(--accent) 55%, var(--accent-2));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.brand-sub { font-size: 14px; color: var(--text-dim); text-transform: none; }
+
+/* The orb, in CSS: a lit core inside two counter-rotating arcs. */
+.brand-orb {
+  position: relative;
+  flex: none;
+  margin: 18px;                 /* room for the two arcs around it */
+  width: 68px; height: 68px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 38% 34%, #fff, var(--accent) 34%, color-mix(in srgb, var(--accent-2) 70%, #000) 72%, transparent 74%);
+  box-shadow: 0 0 44px -6px var(--accent), 0 0 90px -20px var(--accent-2);
+  animation: orb-breathe 5s ease-in-out infinite;
+}
+.brand-orb::before, .brand-orb::after {
+  content: "";
+  position: absolute;
+  inset: -9px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  border-top-color: var(--accent);
+  border-right-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  animation: orb-spin 7s linear infinite;
+}
+.brand-orb::after {
+  inset: -17px;
+  border-width: 1px;
+  border-top-color: var(--accent-2);
+  border-right-color: transparent;
+  border-bottom-color: color-mix(in srgb, var(--accent-3) 60%, transparent);
+  animation-duration: 12s;
+  animation-direction: reverse;
+}
+@keyframes orb-spin { to { transform: rotate(360deg); } }
+@keyframes orb-breathe { 50% { transform: scale(1.06); filter: brightness(1.15); } }
+
+.hero-clock {
+  grid-area: clock;
+  margin-top: 26px;
+  display: flex;
+  flex-direction: column;
+}
+.hero-time {
+  font-size: 76px;
+  font-weight: 200;
+  line-height: 0.95;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+.hero-date { margin-top: 8px; font-size: 16px; color: var(--text-dim); }
+
+.link-state {
+  grid-area: link;
+  justify-self: start;
+  margin-top: 16px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--card-edge);
+  font-size: 12px;
+  text-transform: none;
+  color: var(--text-dim);
+}
+
+/* The subscription and the day, as two cards beside the clock. */
+.shell-stats {
+  grid-area: stats;
+  margin: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  gap: 20px;
+  align-self: stretch;
+}
+.stat-zone, .stat-zone + .stat-zone {
+  padding: 22px 26px 24px;
+  border: 1px solid var(--card-edge);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  backdrop-filter: blur(26px) saturate(1.3);
+  box-shadow: var(--glow-panel);
+  gap: 16px;
+}
+.stat-zone-title { font-size: 18px; font-weight: 600; text-transform: none; color: var(--text); }
+.stat-zone-note, .stat-now { font-size: 12px; text-transform: none; }
+
+/* The gauges become dials: a ring that fills, the figure inside it. */
+.shell-stats .usage-gauges { gap: 28px; justify-content: space-around; flex: 1; align-items: center; }
+.shell-stats .usage-gauge { width: auto; align-items: center; gap: 10px; }
+.shell-stats .usage-gauge .bar {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.shell-stats .usage-gauge .bar-head { display: contents; }
+.shell-stats .usage-gauge .bar-track {
+  order: -1;
+  position: relative;
+  width: 132px; height: 132px;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  overflow: visible;
+  --ring: radial-gradient(farthest-side, transparent calc(100% - 13px), #000 calc(100% - 12px));
+}
+/* The unfilled ring, and over it the filled arc. The arc is the bar's own
+   fill element, so it reads the same --pct the bar always set on it. */
+.shell-stats .usage-gauge .bar-track::after,
+.shell-stats .usage-gauge .bar-fill {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: auto; height: auto;
+  border-radius: 50%;
+  -webkit-mask: var(--ring);
+  mask: var(--ring);
+}
+.shell-stats .usage-gauge .bar-track::after { background: rgba(255, 255, 255, 0.09); }
+.shell-stats .usage-gauge .bar-fill {
+  z-index: 1;
+  background: conic-gradient(from 180deg, var(--tone) var(--pct, 0%), transparent 0);
+  opacity: 1;
+  box-shadow: none;
+  animation: none;
+  transform: none;
+  filter: drop-shadow(0 0 10px var(--tone));
+}
+.shell-stats .usage-gauge .bar-value {
+  position: absolute;
+  top: 66px;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 30px;
+  font-weight: 300;
+  color: var(--text);
+}
+.shell-stats .usage-gauge .bar-label { font-size: 13px; text-transform: none; color: var(--text-dim); }
+.shell-stats .usage-when { font-size: 12px; }
+
+.shell-stats .stat-figures { gap: 26px; flex-wrap: wrap; flex: 1; align-items: center; }
+.shell-stats .readout { align-items: flex-start; gap: 6px; }
+.shell-stats .readout-value { font-size: 44px; font-weight: 200; letter-spacing: -0.02em; }
+.shell-stats .readout-label { font-size: 13px; text-transform: none; color: var(--text-dim); }
+
+/* ── Dock: the navigation, floating at the bottom ─────────────────────────── */
+.shell-tabs {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  z-index: 20;
+  width: max-content;
+  max-width: calc(100vw - 24px);
+  margin: 0;
+  padding: 8px;
+  gap: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  background: rgba(16, 18, 30, 0.72);
+  backdrop-filter: blur(26px) saturate(1.5);
+  box-shadow: 0 24px 60px -20px #000, 0 0 0 1px rgba(0, 0, 0, 0.4),
+              0 0 60px -30px var(--accent);
+}
+.tab, .tab { border-radius: 999px; }
+.tab {
+  gap: 9px;
+  padding: 11px 18px;
+  border: 0;
+  font-size: 13.5px;
+  font-weight: 500;
+  text-transform: none;
+  color: var(--text-dim);
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease),
+              transform var(--dur) var(--ease);
+}
+.tab:hover { background: rgba(255, 255, 255, 0.08); color: var(--text); transform: translateY(-2px); }
+.tab.active {
+  background: linear-gradient(120deg, var(--accent), var(--accent-2));
+  color: #06070d;
+  font-weight: 650;
+  text-shadow: none;
+  box-shadow: 0 8px 26px -10px var(--accent);
+}
+.tab.active::after { content: none; }
+/* An icon where the 01/02/03 index was. */
+.tab::before {
+  content: "";
+  counter-increment: none;
+  width: 17px; height: 17px;
+  background: currentColor;
+  -webkit-mask: var(--icon) center / contain no-repeat;
+  mask: var(--icon) center / contain no-repeat;
+}
+.tab.active::before { color: #06070d; }
+.shell-tabs > .tab:nth-child(1) { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M13 2 4 14h7l-1 8 9-12h-7z'/%3E%3C/svg%3E"); }
+.shell-tabs > .tab:nth-child(2) { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M4 4h16a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-8l-5 4v-4H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z'/%3E%3C/svg%3E"); }
+.shell-tabs > .tab:nth-child(3) { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2 2 7l10 5 10-5zM2 12l10 5 10-5v3l-10 5-10-5zM2 17l10 5 10-5' fill-rule='evenodd'/%3E%3C/svg%3E"); }
+.shell-tabs > .tab:nth-child(4) { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M6 2h8l6 6v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm7 1.5V9h5.5z' fill-rule='evenodd'/%3E%3C/svg%3E"); }
+.shell-tabs > .tab:nth-child(5) { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M3 5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'/%3E%3C/svg%3E"); }
+.shell-tabs > .tab:nth-child(6) { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M4 13h4v8H4zM10 3h4v18h-4zM16 9h4v12h-4z'/%3E%3C/svg%3E"); }
+.tab-badge { margin-left: 2px; }
+
+/* ── Content: a bento of soft cards ───────────────────────────────────────── */
+.shell-main { padding: 24px 36px 40px; }
+.view { gap: 20px; }
+
+/* Runs: what is live and what is done, side by side. */
+#runs-view {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+}
+#runs-view[hidden] { display: none; }
+#attention-section { grid-column: 1 / -1; }
+
+.panel {
+  border: 1px solid var(--card-edge);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  backdrop-filter: blur(26px) saturate(1.3);
+  box-shadow: var(--glow-panel);
+  overflow: hidden;
+}
+.panel::before { content: none; }              /* no corner brackets */
+.panel-head { padding: 22px 26px 4px; border-bottom: 0; }
+.panel-title {
+  font-size: 20px;
+  font-weight: 600;
+  text-transform: none;
+  color: var(--text);
+}
+/* Still the spacer that pushes the count to the right; no longer a rule. */
+.panel-head::after { height: 0; background: none; -webkit-mask-image: none; mask-image: none; }
+.panel-meta {
+  padding: 2px 11px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.panel-meta:empty { display: none; }
+.panel-body { padding: 16px 20px 22px; }
+
+.panel--alert {
+  border-color: color-mix(in srgb, var(--tone) 55%, transparent);
+  background: linear-gradient(155deg, color-mix(in srgb, var(--tone) 22%, transparent),
+                              color-mix(in srgb, var(--tone) 5%, transparent));
+  box-shadow: var(--glow-panel), 0 0 60px -30px var(--tone);
+}
+.panel--alert > .panel-head { background: none; }
+.panel--alert > .panel-head > .panel-title { color: #fff; }
+.panel--alert > .panel-head > .panel-meta {
+  background: var(--tone);
+  color: #06070d;
+  font-weight: 700;
+}
+.panel--quiet { backdrop-filter: none; }
+
+.stack { gap: 8px; }
+.row {
+  padding: 14px 18px;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--surface);
+  transition: background var(--dur) var(--ease), transform var(--dur) var(--ease);
+}
+.row::before { content: none; }                /* the dot and the chip carry the state */
+.row--action:hover { background: var(--surface-raised); transform: translateY(-1px); }
+.row--attn { background: var(--tone-soft); }
+.row-title { font-weight: 600; }
+
+.dot { width: 9px; height: 9px; box-shadow: 0 0 12px var(--tone); }
+.pill {
+  padding: 3px 11px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.03em;
+}
+.bar-track { height: 8px; border: 0; border-radius: 999px; background: rgba(255, 255, 255, 0.09); }
+.bar-track::after { content: none; }
+.bar-fill {
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--tone), color-mix(in srgb, var(--tone) 55%, white));
+  box-shadow: 0 0 14px -2px var(--tone);
+}
+.bar-label, .readout-label, .row-meta, .spark-label, .callout-label { text-transform: none; }
+.readout-value { font-weight: 300; }
+.btn, .callout, .empty { border-radius: var(--radius); }
+
+.pane {
+  top: 14px; right: 14px; bottom: 14px;
+  border: 1px solid var(--card-edge);
+  border-radius: var(--radius-lg);
+  background: rgba(14, 16, 26, 0.86);
+  backdrop-filter: blur(30px) saturate(1.4);
+  box-shadow: -40px 0 90px -40px #000;
+}
+.pane.brackets::before { content: none; }
+.banner { bottom: 100px; border-radius: 999px; }
+
+/* ── Narrow ───────────────────────────────────────────────────────────────── */
+@media (max-width: 1080px) {
+  .shell-head-top {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "brand" "clock" "link" "stats";
+    padding: 28px 20px 8px;
+  }
+  .shell-stats { margin-top: 18px; grid-template-columns: minmax(0, 1fr); }
+  .hero-time { font-size: 56px; }
+  #runs-view { grid-template-columns: minmax(0, 1fr); }
+  .shell-main { padding: 18px 20px 40px; }
+}
+@media (max-width: 760px) {
+  /* The dock keeps its icons and drops its words. */
+  .tab { padding: 12px 14px; font-size: 0; gap: 0; }
+  .tab-badge { font-size: 10px; margin-left: 6px; }
+}

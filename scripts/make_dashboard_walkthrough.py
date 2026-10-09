@@ -176,6 +176,9 @@ STAGE_CSS = """
   /* Preview-page annotations, and its standalone demo of the offline banner.
      None of it ships, so none of it is filmed. */
   .pv-head, .pv-note, .pv-cap, .pv-foot, body > .banner { display: none !important; }
+  /* A still page: the drifting ground and the orb would otherwise sit at a
+     different point in every frame, and a GIF pays for every changed pixel. */
+  *, *::before, *::after { animation: none !important; }
   .stage-off { display: none !important; }
   /* The preview section's gutter stands in for the view's own top padding. */
   .pv-section { padding-top: var(--sp-5); }
@@ -278,6 +281,9 @@ def assemble(seq_dir: pathlib.Path, out: pathlib.Path) -> None:
     only the changed rectangle of each frame, which is what keeps twenty-odd
     seconds of a mostly-static page inside a couple of megabytes."""
     out.parent.mkdir(parents=True, exist_ok=True)
+    if not shutil.which("ffmpeg"):
+        _assemble_pyav(seq_dir, out)
+        return
     subprocess.run(
         [
             "ffmpeg", "-y", "-loglevel", "error",
@@ -294,6 +300,55 @@ def assemble(seq_dir: pathlib.Path, out: pathlib.Path) -> None:
     )
 
 
+def _assemble_pyav(seq_dir: pathlib.Path, out: pathlib.Path) -> None:
+    """The same filter graph through PyAV, for a machine with no ffmpeg on
+    PATH. PyAV carries ffmpeg's libraries and is already in the venv on any
+    install with the local speech backend (faster-whisper depends on it)."""
+    from fractions import Fraction
+
+    import av
+
+    def frames():
+        for i, path in enumerate(sorted(seq_dir.glob("f*.png"))):
+            with av.open(str(path)) as container:
+                frame = next(container.decode(video=0))
+            frame.pts = i
+            frame.time_base = Fraction(1, FPS)
+            yield frame
+
+    first = next(frames())
+    graph = av.filter.Graph()
+    src = graph.add_buffer(width=first.width, height=first.height,
+                           format=first.format.name, time_base=Fraction(1, FPS))
+    split = graph.add("split")
+    gen = graph.add("palettegen", "max_colors=112:stats_mode=diff")
+    use = graph.add("paletteuse", "dither=bayer:bayer_scale=5:diff_mode=rectangle:new=0")
+    sink = graph.add("buffersink")
+    src.link_to(split)
+    split.link_to(gen, 0, 0)
+    split.link_to(use, 1, 0)
+    gen.link_to(use, 0, 1)
+    use.link_to(sink)
+    graph.configure()
+
+    for frame in frames():
+        src.push(frame)
+    src.push(None)
+
+    with av.open(str(out), "w", format="gif", options={"loop": "0"}) as container:
+        stream = container.add_stream("gif", rate=FPS)
+        stream.width, stream.height, stream.pix_fmt = first.width, first.height, "pal8"
+        while True:
+            try:
+                frame = sink.pull()
+            except (av.BlockingIOError, av.EOFError):
+                break
+            for packet in stream.encode(frame):
+                container.mux(packet)
+        for packet in stream.encode(None):
+            container.mux(packet)
+
+
 async def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", type=pathlib.Path, default=OUT)
@@ -302,7 +357,10 @@ async def main() -> None:
     args = ap.parse_args()
 
     if not args.frames_only and not shutil.which("ffmpeg"):
-        raise SystemExit("ffmpeg not on PATH")
+        try:
+            import av  # noqa: F401
+        except ImportError:
+            raise SystemExit("needs ffmpeg on PATH, or PyAV in this venv") from None
 
     tmp = args.frames_dir or pathlib.Path(tempfile.mkdtemp(prefix="jarvis-walkthrough-"))
     tmp.mkdir(parents=True, exist_ok=True)
