@@ -4,7 +4,14 @@ const path = require("node:path");
 // Every collaborator is injected so the whole lifecycle is testable without
 // starting a process or opening a socket. The tests are the reason the hard
 // part of this application has no Electron in it.
-function createSupervisor({ repoRoot, origin, deps = {} }) {
+// startTimeoutMs: how long a server this process started may take to answer.
+// Thirty seconds was the whole allowance, and it is not enough at login: the
+// server needs ~14s on a warm machine (measured 2026-10-09), and at boot it
+// competes with everything else Windows is starting, on a cold disk. Every
+// login then ended in "the server did not answer". A server that DIES is
+// still reported at once (the exit listener below), so a generous wait costs
+// nothing when something is really wrong.
+function createSupervisor({ repoRoot, origin, startTimeoutMs = 120000, deps = {} }) {
   const {
     findPython = require("./python").findPython,
     probe = require("./health").probe,
@@ -77,7 +84,7 @@ function createSupervisor({ repoRoot, origin, deps = {} }) {
     });
 
     const outcome = await Promise.race([
-      waitForJarvis(origin).then((ok) => (ok ? "healthy" : "timeout")),
+      waitForJarvis(origin, { timeoutMs: startTimeoutMs }).then((ok) => (ok ? "healthy" : "timeout")),
       died,
     ]);
     if (outcome === "healthy") return { state: "started", detail: origin };

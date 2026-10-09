@@ -71,7 +71,13 @@ def _run(*argv: str) -> tuple[int, str]:
     the pattern `screen._run` and `tts._spawn_synth` already use.
     """
     try:
+        # "oem", not the default: whoami and icacls write in the console's
+        # OEM code page, and `text=True` alone decodes with the ANSI one. For
+        # an account called Š those disagree -- and on cp1252 some OEM bytes
+        # are not characters at all, so the decode raised and the listing
+        # came back empty. Replace, never raise: these are names to compare.
         out = subprocess.run(list(argv), capture_output=True, text=True,
+                             encoding="oem", errors="replace",
                              timeout=_COMMAND_TIMEOUT)
     except (OSError, subprocess.SubprocessError) as e:
         return -1, f"failed to run {argv[0]}: {e}"
@@ -118,13 +124,20 @@ def _parse_aces(output: str, path: str) -> list[str] | None:
     asked for would have failed at the `icacls /grant` step.
     """
     principals: list[str] = []
-    for raw in output.splitlines():
+    for number, raw in enumerate(output.splitlines()):
         line = raw.strip()
         if not line:
             break                      # the blank line ends the ACE list
         if line.lower().startswith("successfully processed"):
             break
-        if line.startswith(path):
+        # The path leads the first line -- but as the CONSOLE spells it. A
+        # folder under a user called Š comes back as "S" (or "?") on a code
+        # page with no Š in it, so the text cannot be relied on to match; its
+        # length can, one character for one. Without this the whole first
+        # line was read as a principal and JARVIS refused its own token.
+        if line.startswith(path) or (
+                number == 0 and len(line) >= len(path)
+                and line[len(path):len(path) + 1] in ("", " ")):
             line = line[len(path):].strip()
             if not line:
                 continue               # a path on a line of its own

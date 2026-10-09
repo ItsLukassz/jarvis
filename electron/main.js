@@ -11,7 +11,17 @@ const {
 
 const ORIGIN = process.env.JARVIS_ORIGIN || "http://127.0.0.1:8340";
 const REPO_ROOT = path.resolve(__dirname, "..");
-const log = (m) => console.log(`[jarvis] ${m}`);
+// To the console AND a file: started by Windows at login there is no console,
+// and "it said the server was offline" is otherwise all anyone has to go on.
+const APP_LOG = path.join(REPO_ROOT, "data", "jarvis-app.log");
+const log = (m) => {
+  console.log(`[jarvis] ${m}`);
+  try {
+    require("node:fs").appendFileSync(APP_LOG, `${new Date().toISOString()} ${m}\n`);
+  } catch {
+    // a log that cannot be written is not a reason to fail
+  }
+};
 // Started by Windows at login: the tray, not a window. See login.js.
 const STARTED_AT_LOGIN = launchedAtLogin(process.argv);
 
@@ -47,7 +57,13 @@ if (!app.requestSingleInstanceLock()) {
   // by hiding: a hidden JARVIS with no server behind it.
   let reallyQuitting = false;
   let toldAboutTheTray = false;
-  const supervisor = createSupervisor({ repoRoot: REPO_ROOT, origin: ORIGIN, deps: { log } });
+  const supervisor = createSupervisor({
+    repoRoot: REPO_ROOT,
+    origin: ORIGIN,
+    // At login the machine is still starting everything else; see server.js.
+    startTimeoutMs: STARTED_AT_LOGIN ? 300000 : 120000,
+    deps: { log },
+  });
 
   function showWindow() {
     if (!win) return;

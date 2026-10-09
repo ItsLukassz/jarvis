@@ -671,3 +671,15 @@ async def test_the_new_console_spawn_does_not_pass_a_windows_only_flag_off_windo
     assert ok, err
     assert "creationflags" not in seen, (
         "passed a Windows-only argument on a platform that rejects it")
+
+
+def test_the_path_is_recognised_however_the_console_spelled_it():
+    """A user called Š: icacls prints the folder as the console's code page
+    can ("S"), so the path's TEXT no longer leads the line -- only its length
+    does. Read by text alone, the whole first line became a "principal" and
+    JARVIS refused the token it had just created."""
+    path = "/".join(["C:", "Users", "Lukáš Š", "data", "jarvis", "tool-token"]).replace("/", chr(92))
+    printed = path.replace("š", "s").replace("Š", "S")
+    assert printed != path and len(printed) == len(path)
+    listing = f"{printed} DESKTOP-ABC{chr(92)}Lukás S:(F)\n\nSuccessfully processed 1 files\n"
+    assert win_secrets._parse_aces(listing, path) == [f"desktop-abc{chr(92)}lukás s"]
