@@ -40,6 +40,7 @@ WAKE_SUPPORT = ("melspectrogram.onnx", "embedding_model.onnx")
 ENROLL_SAMPLES = 3
 ENROLL_MIN_SECONDS = 1.5
 DEFAULT_THRESHOLD = 0.5
+DEFAULT_GPU_TEMP = 85.0
 WAKE_THRESHOLD = 0.5
 
 _lock = threading.Lock()
@@ -65,7 +66,11 @@ def load() -> dict:
     return {"voice_lock": bool(state.get("voice_lock")),
             "wake_engine": bool(state.get("wake_engine")),
             "threshold": float(state.get("threshold") or DEFAULT_THRESHOLD),
-            "embedding": state.get("embedding") or None}
+            "embedding": state.get("embedding") or None,
+            # Not hearing, but the same kind of thing: switches Settings owns.
+            "follow_up": bool(state.get("follow_up")),
+            "perf_watch": bool(state.get("perf_watch")),
+            "perf_gpu_temp": float(state.get("perf_gpu_temp") or DEFAULT_GPU_TEMP)}
 
 
 def save(**changes) -> dict:
@@ -81,6 +86,8 @@ def status() -> dict:
     state = load()
     return {"voice_lock": state["voice_lock"], "wake_engine": state["wake_engine"],
             "threshold": state["threshold"], "enrolled": state["embedding"] is not None,
+            "follow_up": state["follow_up"], "perf_watch": state["perf_watch"],
+            "perf_gpu_temp": state["perf_gpu_temp"],
             "enrolling": _enroll_left,
             "voice_lock_available": (models_dir() / SPEAKER_MODEL).is_file(),
             "wake_available": all((models_dir() / n).is_file()

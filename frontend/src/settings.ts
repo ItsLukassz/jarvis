@@ -214,6 +214,13 @@ function buildPanelHTML(): string {
           <h3>Overlay Orb</h3>
 
           <div class="settings-field">
+            <label>
+              <input type="checkbox" id="overlay-enabled" />
+              Show the orb over other apps
+            </label>
+          </div>
+
+          <div class="settings-field">
             <label>Where it appears</label>
             <div class="overlay-grid" id="overlay-pos">
               ${["top", "middle", "bottom"].flatMap((v) => ["left", "center", "right"].map((h) =>
@@ -246,6 +253,38 @@ function buildPanelHTML(): string {
               recorded or transcribed until it hears it, so room noise and
               other voices cost nothing. A bare &ldquo;Jarvis&rdquo; is not
               reliably caught: say &ldquo;Hey Jarvis&rdquo;.
+            </p>
+          </div>
+
+          <div class="settings-field">
+            <label>
+              <input type="checkbox" id="input-follow-up" />
+              Conversation mode: reply without saying his name
+            </label>
+            <p class="settings-hint">
+              For 8 seconds after he finishes speaking, whatever is said next
+              is taken as said to him. Other voices in the room count too,
+              unless voice lock is on.
+            </p>
+          </div>
+
+          <div class="settings-field">
+            <label>
+              <input type="checkbox" id="input-cue" />
+              Play a chime when he has heard a request
+            </label>
+          </div>
+
+          <div class="settings-field">
+            <label>
+              <input type="checkbox" id="input-perf-watch" />
+              Performance watch: warn me when the graphics card passes
+              <input type="number" id="input-perf-temp" min="50" max="100" step="1"
+                     style="width:56px;margin:0 4px" />&deg;C
+            </label>
+            <p class="settings-hint">
+              He also says so when memory is 95% full. Checked every 30
+              seconds; each warning is repeated at most every 10 minutes.
             </p>
           </div>
 
@@ -388,7 +427,10 @@ function wireOverlaySettings() {
   if (!grid || !size || !sizeValue) return;
   let saved: { pos?: string; size?: number } = {};
   try { saved = JSON.parse(localStorage.getItem("jarvis-overlay") ?? "{}"); } catch { /* defaults */ }
-  const cfg = { pos: saved.pos ?? "bottom-center", size: saved.size ?? 440 };
+  const cfg = { pos: saved.pos ?? "bottom-center", size: saved.size ?? 440,
+                enabled: (saved as { enabled?: boolean }).enabled !== false };
+  const enabled = document.getElementById("overlay-enabled") as HTMLInputElement | null;
+  enabled?.addEventListener("change", () => { cfg.enabled = enabled.checked; save(); });
   const channel = new BroadcastChannel("jarvis-overlay");
 
   const themes = document.getElementById("theme-row");
@@ -408,6 +450,7 @@ function wireOverlaySettings() {
       b.classList.toggle("active", b.dataset.pos === cfg.pos));
     size.value = String(cfg.size);
     sizeValue.textContent = `${cfg.size} px`;
+    if (enabled) enabled.checked = cfg.enabled;
   };
   const save = () => {
     localStorage.setItem("jarvis-overlay", JSON.stringify(cfg));
@@ -432,7 +475,18 @@ function wireHearingSettings() {
   if (!wake || !lock || !note || !strict || !strictValue) return;
   let poll = 0;
 
+  const followUp = document.getElementById("input-follow-up") as HTMLInputElement;
+  const perf = document.getElementById("input-perf-watch") as HTMLInputElement;
+  const perfTemp = document.getElementById("input-perf-temp") as HTMLInputElement;
+  const cueBox = document.getElementById("input-cue") as HTMLInputElement;
+  cueBox.checked = localStorage.getItem("jarvis-cue") !== "0";     // this window's own setting
+  cueBox.addEventListener("change", () =>
+    localStorage.setItem("jarvis-cue", cueBox.checked ? "1" : "0"));
+
   const show = (h: Record<string, unknown>) => {
+    followUp.checked = Boolean(h.follow_up);
+    perf.checked = Boolean(h.perf_watch);
+    perfTemp.value = String(h.perf_gpu_temp);
     wake.checked = Boolean(h.wake_engine);
     wake.disabled = !h.wake_available;
     lock.checked = Boolean(h.voice_lock);
@@ -453,6 +507,9 @@ function wireHearingSettings() {
                             body: JSON.stringify(body) })
       .then((r) => r.json()).then(show).catch(() => {});
 
+  followUp.addEventListener("change", () => send({ follow_up: followUp.checked }));
+  perf.addEventListener("change", () => send({ perf_watch: perf.checked }));
+  perfTemp.addEventListener("change", () => send({ perf_gpu_temp: Number(perfTemp.value) }));
   wake.addEventListener("change", () => send({ wake_engine: wake.checked }));
   lock.addEventListener("change", () => send({ voice_lock: lock.checked }));
   strict.addEventListener("change", () => send({ threshold: Number(strict.value) }));

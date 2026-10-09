@@ -85,6 +85,7 @@ TOOL_CAPABILITIES: dict[str, str] = {
     "write_clipboard": CAP_PC_CONTROL,
     "create_file": CAP_PC_CONTROL,
     "find_files": CAP_PC_CONTROL,
+    "notes": CAP_PC_CONTROL,
     "open_file": CAP_PC_CONTROL,
     "append_to_file": CAP_PC_CONTROL,
     "move_file": CAP_PC_CONTROL,

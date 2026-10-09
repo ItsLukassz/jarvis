@@ -54,6 +54,9 @@ export interface Capture {
   setWakeGated(on: boolean): void;
   /** The server heard the wake word: start the utterance, from a moment ago. */
   wake(): void;
+  /** Conversation mode: for `ms`, whatever is said next counts as said to
+   *  him -- no name, no wake word. */
+  followUp(ms: number): void;
   readonly running: boolean;
 }
 
@@ -190,6 +193,7 @@ export function createCapture(
   let wakeGated = false;
   let woken = false;            // this utterance was started by the wake word
   let preroll: Float32Array[] = [];
+  let followUpUntil = 0;        // performance.now() until which a reply needs no name
 
   const reset = () => {
     chunks = [];
@@ -241,7 +245,7 @@ export function createCapture(
     }
     const ms = (input.length / RATE) * 1000;
 
-    if (wakeGated && !speaking) {
+    if (wakeGated && !speaking && performance.now() >= followUpUntil) {
       // Nothing is recorded until the server says his name was said. Keep the
       // last few seconds, and hand this block to the wake-word model.
       preroll.push(new Float32Array(input));
@@ -260,7 +264,9 @@ export function createCapture(
     if (peak >= bar) {
       if (!speaking) {
         speaking = true;
-        onEvent("speech started");
+        // Started inside the follow-up window: it is a reply to him.
+        woken = performance.now() < followUpUntil;
+        onEvent(woken ? "speech started (follow-up)" : "speech started");
       }
       quietFor = 0;
     } else if (speaking) {
@@ -316,6 +322,9 @@ export function createCapture(
     setWakeGated(on: boolean) {
       wakeGated = on;
       preroll = [];
+    },
+    followUp(ms: number) {
+      followUpUntil = performance.now() + ms;
     },
     wake() {
       if (!running || speaking) return;

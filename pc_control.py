@@ -474,12 +474,74 @@ def stats() -> dict:
     return out
 
 
+NOTES_FILE = "Documents/Jarvis Notes.md"
+
+
+def note_add(text: str) -> str:
+    """Append one dated line to the running notes file; returns its path."""
+    from datetime import datetime
+    text = " ".join((text or "").split())
+    if not text:
+        raise PcError("There was nothing to note")
+    target = Path.home() / NOTES_FILE
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with open(target, "a", encoding="utf-8", newline="") as fh:
+            fh.write(f"- [{datetime.now():%Y-%m-%d %H:%M}] {text[:1000]}\n")
+    except OSError:
+        raise PcError("Windows wouldn't let me write the notes file") from None
+    return str(target)
+
+
+def notes_read(days: float = 1) -> list[str]:
+    """The notes from the last `days` days (today only by default), oldest first."""
+    from datetime import datetime, timedelta
+    since = (datetime.now() - timedelta(days=max(1.0, days) - 1)).strftime("%Y-%m-%d")
+    try:
+        lines = (Path.home() / NOTES_FILE).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    return [line for line in lines if line.startswith("- [") and line[3:13] >= since][-60:]
+
+
 def status() -> str:
-    """CPU, memory, the biggest memory users, and the graphics card."""
+    """CPU, memory, who is using them, the network, and the graphics card."""
+    import time
     import psutil
     mem = psutil.virtual_memory()
-    lines = [f"CPU {psutil.cpu_percent(interval=0.5):.0f} percent busy.",
-             f"Memory {mem.used / 2**30:.1f} of {mem.total / 2**30:.1f} GB used."]
+    # Per-process CPU needs two readings a moment apart; the network rate
+    # comes out of the same pause.
+    procs = list(psutil.process_iter(["name"]))
+    for p in procs:
+        try:
+            p.cpu_percent(None)
+        except psutil.Error:
+            pass
+    net0 = psutil.net_io_counters()
+    psutil.cpu_percent(None)
+    time.sleep(1.0)
+    net1 = psutil.net_io_counters()
+    busy: dict[str, float] = {}
+    for p in procs:
+        try:
+            share = p.cpu_percent(None) / (psutil.cpu_count() or 1)
+        except psutil.Error:
+            continue
+        name = (p.info.get("name") or "").removesuffix(".exe")
+        if name and name != "System Idle Process":
+            busy[name] = busy.get(name, 0) + share
+    top_cpu = [(n, v) for n, v in sorted(busy.items(), key=lambda kv: kv[1], reverse=True)[:5]
+               if v >= 1]
+    lines = [f"CPU {psutil.cpu_percent(None):.0f} percent busy.",
+             ("Busiest on the CPU: " + ", ".join(f"{n} {v:.0f} percent" for n, v in top_cpu) + "."
+              if top_cpu else "Nothing much is using the CPU."),
+             f"Memory {mem.used / 2**30:.1f} of {mem.total / 2**30:.1f} GB used.",
+             # ponytail: the whole machine's rate. Windows gives no per-program
+             # network figure without an ETW trace (admin); Task Manager's
+             # Network column is the place to see which program it is.
+             f"Network: {(net1.bytes_recv - net0.bytes_recv) * 8 / 1e6:.1f} megabits a second down, "
+             f"{(net1.bytes_sent - net0.bytes_sent) * 8 / 1e6:.1f} up, for the whole PC "
+             f"(which program is not something I can see)."]
     by_name: dict[str, float] = {}
     for p in psutil.process_iter(["name", "memory_info"]):
         try:

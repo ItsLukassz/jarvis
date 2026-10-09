@@ -495,6 +495,14 @@ TOOL_SPECS = [
                         "required": ["text"]},
     },
     {
+        "name": "notes",
+        "description": ("The user's running notes file. `add` appends one dated line ('note: "
+                        "buy a new mouse'). With no `add` it reads back the last `days` days "
+                        "(default: today)."),
+        "inputSchema": {"type": "object",
+                        "properties": {"add": {"type": "string"}, "days": {"type": "number"}}},
+    },
+    {
         "name": "find_files",
         "description": ("Find files in the user's Desktop, Documents, Downloads, Pictures, "
                         "Videos and Music by words in the NAME, newest first. `folder` narrows "
@@ -587,8 +595,9 @@ TOOL_SPECS = [
     },
     {
         "name": "pc_status",
-        "description": ("How the PC is doing: CPU load, memory, the biggest memory users, and "
-                        "the graphics card's temperature, load and memory."),
+        "description": ("How the PC is doing and what is using it: CPU load and the busiest "
+                        "programs, memory and its biggest users, the network rate, and the "
+                        "graphics card. Use it for 'what's slowing my PC' too."),
         "inputSchema": {"type": "object", "properties": {}},
     },
     {

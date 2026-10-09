@@ -108,8 +108,34 @@ volumeEl.addEventListener("click", (e) => e.stopPropagation());
 
 let muteMicDuringSpeech = false;
 
+// Conversation mode (Settings > Hearing): after he speaks, a reply within
+// this long needs no "Jarvis".
+const FOLLOW_UP_MS = 8000;
+let followUpOn = false;
+
+// A short two-note chime: "I heard that". Off in Settings > Hearing.
+function cue() {
+  if (localStorage.getItem("jarvis-cue") === "0") return;
+  const ctx = audioPlayer.getAnalyser().context as AudioContext;
+  const gain = ctx.createGain();
+  const level = 0.07 * (Number(volumeEl.value) / 100);
+  gain.gain.setValueAtTime(level, ctx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.22);
+  gain.connect(ctx.destination);
+  const osc = ctx.createOscillator();
+  osc.type = "sine";
+  osc.frequency.setValueAtTime(880, ctx.currentTime);
+  osc.frequency.setValueAtTime(1320, ctx.currentTime + 0.09);
+  osc.connect(gain);
+  osc.start();
+  osc.stop(ctx.currentTime + 0.24);
+}
+
 function transition(newState: State) {
   if (newState === currentState) return;
+  if (followUpOn && currentState === "speaking" && newState === "listening") {
+    capture.followUp(FOLLOW_UP_MS);
+  }
   currentState = newState;
   document.body.dataset.state = newState;      // the stylesheet takes its accent from this
   const btn = document.getElementById("hush");
@@ -180,7 +206,10 @@ const capture = createCapture(
 function syncHearing() {
   fetch("/api/hearing")
     .then((r) => r.json())
-    .then((h) => capture.setWakeGated(Boolean(h?.wake_engine)))
+    .then((h) => {
+      capture.setWakeGated(Boolean(h?.wake_engine));
+      followUpOn = Boolean(h?.follow_up);
+    })
     .catch(() => capture.setWakeGated(false));      // unknown: listen the ordinary way
 }
 syncHearing();
@@ -294,6 +323,7 @@ socket.onMessage((msg) => {
     }
     if (msg.text) addLog("jarvis", String(msg.shown ?? msg.text));
   } else if (type === "heard") {
+    cue();
     addLog("you", String(msg.text));
   } else if (type === "stop") {
     audioPlayer.stop();

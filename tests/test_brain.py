@@ -69,6 +69,7 @@ def test_command_has_exact_flags(tmp_path):
         "mcp__jarvis__set_volume,mcp__jarvis__set_audio_output,"
         "mcp__jarvis__read_clipboard,mcp__jarvis__write_clipboard,"
         "mcp__jarvis__create_file,"
+        "mcp__jarvis__notes,"
         "mcp__jarvis__find_files,mcp__jarvis__open_file,"
         "mcp__jarvis__append_to_file,mcp__jarvis__move_file,"
         "mcp__jarvis__type_text,mcp__jarvis__discord_control,"

@@ -41,7 +41,14 @@ function setTitle(mode: "on" | "off" | "preview") {
 let hideTimer = 0;
 let shown = false;
 
+// Settings > Overlay Orb can switch the overlay off altogether.
+function disabled(): boolean {
+  try { return JSON.parse(localStorage.getItem("jarvis-overlay") ?? "{}").enabled === false; }
+  catch { return false; }
+}
+
 function show(mode: "on" | "preview" = "on") {
+  if (disabled()) return;
   clearTimeout(hideTimer);
   if (shown && mode === "on") return;
   shown = true;

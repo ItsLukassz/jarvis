@@ -104,3 +104,41 @@ def test_only_his_name_with_a_stop_word_and_nothing_else_stops_him():
         assert server._is_voice_stop(said), said
     for said in ("stop", "Jarvis, stop the music", "Travis be quiet", "that's enough"):
         assert not server._is_voice_stop(said), said
+
+
+def test_notes_are_dated_lines_in_one_file_and_read_back_by_day(tmp_path, monkeypatch):
+    import pc_control
+    monkeypatch.setattr(pc_control.Path, "home", classmethod(lambda cls: tmp_path))
+    assert pc_control.notes_read() == []
+    pc_control.note_add("buy a   new mouse")
+    pc_control.note_add("call the bank")
+    today = pc_control.notes_read()
+    assert len(today) == 2 and today[0].endswith("buy a new mouse")
+    notes = tmp_path / pc_control.NOTES_FILE
+    notes.write_text("- [2020-01-01 09:00] ancient\n" + notes.read_text(encoding="utf-8"),
+                     encoding="utf-8")
+    assert len(pc_control.notes_read()) == 2            # not the old one
+    with pytest.raises(pc_control.PcError):
+        pc_control.note_add("   ")
+
+
+def test_a_reminder_is_on_disk_until_it_is_said_and_comes_back_after_a_restart(tmp_path, monkeypatch):
+    import asyncio
+    import time
+    import server
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+    scheduled = []
+    monkeypatch.setattr(server, "_schedule_reminder",
+                        lambda due, message, missed=False: scheduled.append((message, missed)))
+    said = asyncio.run(server.tool_set_reminder({"message": "tea", "minutes": 5}))
+    assert said.startswith("Reminder set for")
+    assert [r["message"] for r in server._saved_reminders()] == ["tea"]
+
+    now = time.time()
+    server._save_reminders(server._saved_reminders() + [
+        {"due": now - 60, "message": "missed while off"},
+        {"due": now - 3 * 86400, "message": "days stale"}])
+    scheduled.clear()
+    server._restore_reminders()                          # "the server started again"
+    assert sorted(scheduled) == [("missed while off", True), ("tea", False)]
+    assert "days stale" not in [r["message"] for r in server._saved_reminders()]

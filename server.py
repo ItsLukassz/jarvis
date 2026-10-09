@@ -1934,20 +1934,45 @@ TURN_SETTLE_TIMEOUT = 120.0
 # Said the moment a task's first tool starts (see _OneLinePerTurn's `ack`).
 # "sir" is swapped for the user's HONORIFIC when spoken (tts._apply_honorific).
 # JARVIS_TOOL_ACK=0 turns it off.
-TOOL_ACK_LINES = (
-    "Very well, sir. Working on it.",
-    "On it, sir.",
-    "Right away, sir.",
-    "Certainly, sir. One moment.",
-    "Very good, sir. Give me a moment.",
-)
+#
+# The line follows what he is about to DO. One pool for everything had him
+# answer "what's on my screen?" with "On it, sir." -- the right words for a
+# task, and nonsense for a question. So: looking, checking, doing, and
+# starting something long each have their own, and anything unrecognised
+# gets a line that fits all of them.
+TOOL_ACK_LINES = {
+    "look": ("Let me take a look, sir.", "Having a look now, sir.", "One moment, sir. Looking."),
+    "check": ("Let me check, sir.", "One moment, sir. Checking.", "Let me find out, sir."),
+    "do": ("Right away, sir.", "Of course, sir.", "Certainly, sir."),
+    "task": ("Very well, sir. Working on it.", "On it, sir.", "I'll get that started, sir."),
+    "other": ("One moment, sir.", "Just a moment, sir."),
+}
+_ACK_KIND = {
+    **dict.fromkeys(("what_is_on_screen", "look_at_screen", "look_at_window",
+                     "look_at_page"), "look"),
+    **dict.fromkeys(("read_page", "WebSearch", "WebFetch", "find_files", "recall",
+                     "pc_status", "read_clipboard", "list_sessions", "session_detail",
+                     "list_projects", "read_file", "search_repo", "repo_overview",
+                     "github_repo", "usage_status", "connections", "watches",
+                     "run_status", "build_status", "review_document"), "check"),
+    **dict.fromkeys(("open_app", "close_app", "media_control", "window_control",
+                     "set_volume", "set_audio_output", "write_clipboard", "create_file",
+                     "append_to_file", "move_file", "open_file", "type_text",
+                     "discord_control", "play_music", "set_reminder", "remember",
+                     "open_in_browser", "open_in_terminal", "answer_dialog",
+                     "approve_document", "cancel_run"), "do"),
+    **dict.fromkeys(("spawn_run", "start_build", "run_command", "steer_session",
+                     "create_project", "watch_page", "enable_connection"), "task"),
+}
 
 
-def _tool_ack_line() -> str:
+def _tool_ack_line(tool: str | None = None) -> str:
+    """The line for the tool he has just reached for (a bare or `mcp__…__` name)."""
     if os.getenv("JARVIS_TOOL_ACK", "1").strip().lower() in ("0", "false", "no", "off"):
         return ""
     import random
-    return random.choice(TOOL_ACK_LINES)
+    kind = _ACK_KIND.get((tool or "").rsplit("__", 1)[-1], "other")
+    return random.choice(TOOL_ACK_LINES[kind])
 
 
 class _OneLinePerTurn:
@@ -2010,6 +2035,7 @@ class _OneLinePerTurn:
         if not self._tool_seen and self._ack is not None:
             line = self._ack()
             if line:
+                log.info("ack: %s", line)
                 self._sink(line + " ")
         self._tool_seen = True
         self._streaming = False     # hold again; more tools may follow
@@ -2048,7 +2074,9 @@ async def _handle_utterance(text: str) -> None:
     try:
         try:
             try:
-                hold = _OneLinePerTurn(lambda d: speech.feed(utt, d), ack=_tool_ack_line)
+                hold = _OneLinePerTurn(
+                    lambda d: speech.feed(utt, d),
+                    ack=lambda: _tool_ack_line(getattr(brain_instance, "current_tool", None)))
                 result = await brain_instance.turn(text, origin="user",
                                                    on_delta=hold.delta,
                                                    on_tool=hold.tool_started)
@@ -2229,6 +2257,9 @@ async def lifespan(application: FastAPI):
 
     await start_brain_and_speech()
     await start_session_watcher()
+    _restore_reminders()
+    if sys.platform == "win32":
+        _spawn(_perf_watch_loop())
     # Deliberately not awaited: every check is time-boxed to 5s, so running
     # them inline could hold the server closed for that long before the UI can
     # connect -- and the mic is the first thing the user reaches for. The task
@@ -2867,6 +2898,10 @@ TAINT_EXEMPT_TOOLS = {
     "write_clipboard": (
         "it WRITES the brain's own text to the clipboard and answers with a "
         "fixed sentence; reading the clipboard is `read_clipboard`, which taints"),
+    "notes": (
+        "it reads back lines JARVIS itself wrote from the user's own dictation "
+        "into one file in his Documents; treating his own notes as a stranger's "
+        "text shut `remember` for the rest of the conversation after reading them"),
     "type_text": (
         "it types the brain's own text into the focused window and answers "
         "with a character count; nothing is read from that window"),
@@ -6592,17 +6627,58 @@ async def tool_pc_status(args: dict) -> str:
 
 REMINDER_MAX_MINUTES = 24 * 60
 REMINDER_MAX_CHARS = 200
-# ponytail: reminders live in memory and die with the server; persist them
-# in run_store if they need to survive a restart.
 _reminders: set = set()
 
 
-async def _fire_reminder(delay_sec: float, message: str) -> None:
-    await asyncio.sleep(delay_sec)
+def _reminders_path() -> Path:
+    return data_paths.data_dir() / "jarvis" / "reminders.json"
+
+
+def _saved_reminders() -> list[dict]:
+    try:
+        saved = json.loads(_reminders_path().read_text(encoding="utf-8"))
+        return [r for r in saved if isinstance(r, dict) and "due" in r and "message" in r]
+    except (OSError, ValueError):
+        return []
+
+
+def _save_reminders(reminders: list[dict]) -> None:
+    path = _reminders_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(reminders), encoding="utf-8")
+
+
+async def _fire_reminder(due: float, message: str, missed: bool = False) -> None:
+    """Wait until `due` (a wall-clock timestamp), say it, forget it. The file
+    is what lets a reminder outlive the server: see `_restore_reminders`."""
+    await asyncio.sleep(max(0.0, due - time.time()))
     if speech is not None:
         # The user's own words, said back to him — `_safe_label`'s case.
         said = _safe_label(message, REMINDER_MAX_CHARS)
-        await speech.say(f"A reminder, sir: {said}", Priority.NORMAL)
+        lead = "A reminder came due while I was off, sir" if missed else "A reminder, sir"
+        await speech.say(f"{lead}: {said}", Priority.NORMAL)
+    _save_reminders([r for r in _saved_reminders()
+                     if not (r["due"] == due and r["message"] == message)])
+
+
+def _schedule_reminder(due: float, message: str, missed: bool = False) -> None:
+    task = _spawn(_fire_reminder(due, message, missed))
+    _reminders.add(task)
+    task.add_done_callback(_reminders.discard)
+
+
+def _restore_reminders() -> None:
+    """At startup: every reminder still on file is scheduled again. One whose
+    time passed while he was off is said shortly after he is up -- late beats
+    never -- unless it is more than a day stale."""
+    now = time.time()
+    keep = [r for r in _saved_reminders() if r["due"] > now - 86400]
+    _save_reminders(keep)
+    for r in keep:
+        missed = r["due"] <= now
+        _schedule_reminder(now + 45 if missed else r["due"], r["message"], missed)
+    if keep:
+        log.info("restored %d reminder(s)", len(keep))
 
 
 async def tool_set_reminder(args: dict) -> str:
@@ -6624,9 +6700,9 @@ async def tool_set_reminder(args: dict) -> str:
         return "I need either a number of minutes or a time like 18:30, sir."
     if not 0 < minutes <= REMINDER_MAX_MINUTES:
         return "I can set a reminder for up to a day ahead, sir."
-    task = _spawn(_fire_reminder(minutes * 60, message))
-    _reminders.add(task)
-    task.add_done_callback(_reminders.discard)
+    due_at = time.time() + minutes * 60
+    _save_reminders(_saved_reminders() + [{"due": due_at, "message": message}])
+    _schedule_reminder(due_at, message)
     due = (datetime.now() + timedelta(minutes=minutes)).strftime("%H:%M")
     return f"Reminder set for {due}."
 
@@ -6829,7 +6905,60 @@ async def tool_watches(args: dict) -> str:
         for name, w in _watches.items()) + "."
 
 
+async def tool_notes(args: dict) -> str:
+    """One running notes file: add a dated line, or read recent ones back."""
+    import pc_control
+    add = str(args.get("add") or "")
+    if add.strip():
+        _, refusal = await _pc(pc_control.note_add, add)
+        return refusal or "Noted."
+    try:
+        days = float(args.get("days") or 1)
+    except (TypeError, ValueError):
+        days = 1
+    lines, refusal = await _pc(pc_control.notes_read, days)
+    if refusal:
+        return refusal
+    if not lines:
+        return "There are no notes for that period, sir."
+    return f"{len(lines)} note(s):\n" + _wrap_untrusted(_PC_WRAP_NAME, "\n".join(lines))
+
+
+# Performance watch (Settings): say so, once, when the graphics card runs hot
+# or memory is nearly gone -- then keep quiet about it for a while.
+PERF_CHECK_SEC = 30
+PERF_QUIET_SEC = 600
+PERF_MEMORY_PERCENT = 95
+
+
+async def _perf_watch_loop() -> None:
+    import pc_control
+    last_said = {"gpu": 0.0, "ram": 0.0}
+    while True:
+        await asyncio.sleep(PERF_CHECK_SEC)
+        try:
+            prefs = hearing.load()
+            if not prefs["perf_watch"] or _paused or speech is None:
+                continue
+            stats = await asyncio.to_thread(pc_control.stats)
+            now = time.monotonic()
+            temp = stats.get("gpu_temp")
+            if temp is not None and temp >= prefs["perf_gpu_temp"] \
+                    and now - last_said["gpu"] > PERF_QUIET_SEC:
+                last_said["gpu"] = now
+                await speech.say(f"Sir, the graphics card is at {temp:.0f} degrees.",
+                                 Priority.NORMAL)
+            if stats.get("ram", 0) >= PERF_MEMORY_PERCENT \
+                    and now - last_said["ram"] > PERF_QUIET_SEC:
+                last_said["ram"] = now
+                await speech.say(f"Sir, memory is {stats['ram']:.0f} percent full.",
+                                 Priority.NORMAL)
+        except Exception:
+            log.debug("performance watch: check failed", exc_info=True)
+
+
 TOOL_HANDLERS.update({
+    "notes": tool_notes,
     "find_files": tool_find_files,
     "open_file": tool_open_file,
     "append_to_file": tool_append_to_file,
@@ -6856,7 +6985,7 @@ ACTING_TOOLS.update({"open_app", "close_app", "media_control", "window_control",
                      "write_clipboard", "pc_status", "set_reminder", "create_file",
                      "find_files", "open_file", "append_to_file", "move_file",
                      "type_text", "discord_control", "play_music",
-                     "watch_page", "watches"})
+                     "watch_page", "watches", "notes"})
 
 
 # ---------------------------------------------------------------------------
@@ -7987,6 +8116,9 @@ class HearingUpdate(BaseModel):
     voice_lock: bool | None = None
     wake_engine: bool | None = None
     threshold: float | None = None
+    follow_up: bool | None = None
+    perf_watch: bool | None = None
+    perf_gpu_temp: float | None = None
 
 
 @app.get("/api/hearing")
@@ -8009,6 +8141,12 @@ async def api_hearing_update(body: HearingUpdate):
         changes["wake_engine"] = body.wake_engine and hearing.status()["wake_available"]
     if body.threshold is not None:
         changes["threshold"] = min(0.8, max(0.2, body.threshold))
+    if body.follow_up is not None:
+        changes["follow_up"] = body.follow_up
+    if body.perf_watch is not None:
+        changes["perf_watch"] = body.perf_watch
+    if body.perf_gpu_temp is not None:
+        changes["perf_gpu_temp"] = min(100.0, max(50.0, body.perf_gpu_temp))
     if changes:
         hearing.save(**changes)
     return hearing.status()

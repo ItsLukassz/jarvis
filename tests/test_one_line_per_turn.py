@@ -97,3 +97,17 @@ def test_a_second_round_of_narration_cannot_slip_out_between_tools():
         ("tool",),
         ("text", "Done, sir."),
     ]) == ["Done, sir."]
+
+
+def test_the_acknowledgment_fits_what_he_is_about_to_do():
+    """ "What's on my screen?" answered with "On it, sir." is the right words
+    for a task and nonsense for a question."""
+    import server
+    looks, tasks = server.TOOL_ACK_LINES["look"], server.TOOL_ACK_LINES["task"]
+    for _ in range(20):
+        assert server._tool_ack_line("mcp__jarvis__what_is_on_screen") in looks
+        assert server._tool_ack_line("mcp__jarvis__spawn_run") in tasks
+        assert server._tool_ack_line("WebSearch") in server.TOOL_ACK_LINES["check"]
+        assert server._tool_ack_line("mcp__notion__search") in server.TOOL_ACK_LINES["other"]
+        assert server._tool_ack_line(None) in server.TOOL_ACK_LINES["other"]
+    assert not set(looks) & set(tasks)

@@ -78,6 +78,7 @@ ALLOWED_TOOLS = [
     "mcp__jarvis__read_clipboard",
     "mcp__jarvis__write_clipboard",
     "mcp__jarvis__create_file",
+    "mcp__jarvis__notes",
     "mcp__jarvis__find_files",
     "mcp__jarvis__open_file",
     "mcp__jarvis__append_to_file",
@@ -566,6 +567,12 @@ class Brain:
     @property
     def current_origin(self) -> Optional[str]:
         return self._inflight.origin if self._inflight else None
+
+    @property
+    def current_tool(self) -> Optional[str]:
+        """The tool the turn in flight most recently reached for, if any."""
+        t = self._inflight
+        return t.tools[-1] if t and t.tools else None
 
     @property
     def turn_untrusted_source(self) -> Optional[str]:
